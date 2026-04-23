@@ -1,0 +1,315 @@
+---------------------------------------
+-- Reputation Achievement Common Module
+---------------------------------------
+local ReputationCommon = {}
+
+local addonName, addon = ...
+local UnitClass = UnitClass
+local GetFactionInfoByID = GetFactionInfoByID
+local GetFactionInfo = GetFactionInfo
+local GetNumFactions = GetNumFactions
+local CreateFrame = CreateFrame
+local C_Timer = C_Timer
+
+---------------------------------------
+-- Registration Function
+---------------------------------------
+
+local function registerReputationAchievement(def)
+  local achId = def.achId
+  local title = def.title or ""
+  local tooltip = def.tooltip or ""
+  local icon = def.icon
+  local points = def.points or 0
+  local factionId = def.factionId -- Faction ID (required)
+  local staticPoints = def.staticPoints or false
+  local class = def.class -- Optional class restriction
+  
+  -- Create unique variable names
+  local rowVarName = achId .. "_Row"
+  local registerFuncName = "Register" .. achId
+  
+  ---------------------------------------
+  -- Helper Functions
+  ---------------------------------------
+
+  -- Get character database with fallback
+  local function GetCharDB()
+    return (addon and addon.GetCharDB and addon.GetCharDB()) or (function() return nil, nil end)()
+  end
+
+  -- Check if achievement was already completed in database
+  local function WasAlreadyCompleted()
+    local _, cdb = GetCharDB()
+    return cdb and cdb.achievements and cdb.achievements[achId] and cdb.achievements[achId].completed
+  end
+
+  -- Get faction standing ID (8 = Exalted)
+  local function GetFactionStanding()
+    if GetFactionInfoByID then
+      local _, _, standing = GetFactionInfoByID(factionId)
+      if standing then
+        return standing
+      end
+    end
+    
+    -- Fallback: loop through GetNumFactions and check standingId
+    local numFactions = GetNumFactions()
+    for i = 1, numFactions do
+      local name, _, standingId, _, _, _, _, _, isHeader, _, _, _, _, factionID = GetFactionInfo(i)
+      if not isHeader and factionID == factionId then
+        return standingId
+      end
+    end
+    return nil
+  end
+
+  -- Check if player has the faction and is exalted
+  -- Uses factionId to check standing via C_Reputation.GetFactionDataByID()
+  local function IsExalted()
+    local standing = GetFactionStanding()
+    return standing == 8
+  end
+  
+  -- Check if player has the faction in their list (even if not exalted)
+  -- Uses GetNumFactions loop to check if faction exists in player's reputation list
+  local function HasFaction()  
+    local numFactions = GetNumFactions()
+    for i = 1, numFactions do
+      local name, _, _, _, _, _, _, _, isHeader, _, _, _, _, factionID = GetFactionInfo(i)
+      if not isHeader and factionID == factionId then
+        return true
+      end
+    end
+    return false
+  end
+  
+  ---------------------------------------
+  -- Tooltip Management
+  ---------------------------------------
+
+  local function UpdateTooltip()
+    local row = addon[rowVarName]
+    if row then
+      -- Store the base tooltip for the main tooltip
+      local baseTooltip = tooltip or ""
+      row.tooltip = baseTooltip
+
+      -- UI is created lazily; only touch frame methods when the row frame exists
+      local frame = row.frame
+      if not frame then
+        if addon and addon.AddRowUIInit then
+          addon.AddRowUIInit(row, function()
+            C_Timer.After(0, UpdateTooltip)
+          end)
+        end
+        return
+      end
+      frame.tooltip = baseTooltip
+      
+      -- Ensure mouse events are enabled and highlight texture exists
+      frame:EnableMouse(true)
+      if not frame.highlight then
+        frame.highlight = frame:CreateTexture(nil, "BACKGROUND")
+        frame.highlight:SetAllPoints(frame)
+        frame.highlight:SetColorTexture(1, 1, 1, 0.10)
+        frame.highlight:Hide()
+      end
+      
+      -- Override the OnEnter script to use proper GameTooltip API while preserving highlighting
+      frame:SetScript("OnEnter", function(self)
+        -- Show highlight
+        if self.highlight then
+          self.highlight:Show()
+        end
+        
+        if self.Title and self.Title.GetText then
+          GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+          GameTooltip:ClearLines()
+          GameTooltip:SetText(title or "", 1, 1, 1)
+          
+          -- Points (right) on one line
+          local rightText = (self.points and tonumber(self.points) and tonumber(self.points) > 0) and (ACHIEVEMENT_POINTS .. ": " .. tostring(self.points)) or " "
+          GameTooltip:AddLine(rightText, 0.7, 0.9, 0.7)
+          
+          -- Description in default yellow
+          GameTooltip:AddLine(baseTooltip, nil, nil, nil, true)
+          
+          -- Hint for linking the achievement in chat
+          GameTooltip:AddLine("\nShift click to link in chat\nor add to tracking list", 0.5, 0.5, 0.5)
+          
+          GameTooltip:Show()
+        end
+      end)
+      
+      -- Set up OnLeave script to hide highlight and tooltip
+      frame:SetScript("OnLeave", function(self)
+        if self.highlight then
+          self.highlight:Hide()
+        end
+        GameTooltip:Hide()
+      end)
+    end
+  end
+  
+  -- Mark achievement as completed and optionally show toast
+  local function MarkCompletionAndShowToast(row, showToast)
+    if not row or not (addon and addon.MarkRowCompleted) then
+      return
+    end
+    
+    addon.MarkRowCompleted(row)
+
+    if showToast and addon and addon.AchToast_Show then
+      addon.AchToast_Show(row.Icon:GetTexture(), row.Title:GetText(), row.points, row)
+    end
+  end
+
+  -- Check if achievement should be completed (no progress saving - just check directly)
+  local function CheckCompletion()
+    -- First check database to see if achievement was previously completed
+    if WasAlreadyCompleted() then
+      return true
+    end
+    
+    -- Check if row is already marked as completed
+    local row = addon[rowVarName]
+    if row and row.completed then
+      return true
+    end
+    
+    -- Check if player is exalted
+    if IsExalted() then
+      return true
+    end
+    
+    return false
+  end
+  
+  -- Reputation tracker (called on UPDATE_FACTION events)
+  local function ReputationTracker()
+    -- Check if achievement should be completed
+    if CheckCompletion() then
+      local row = addon[rowVarName]
+      -- Only show toast if this is a new completion (not loading from database)
+      local showToast = not WasAlreadyCompleted()
+      MarkCompletionAndShowToast(row, showToast)
+      UpdateTooltip()
+      return true
+    end
+    
+    UpdateTooltip()
+    return false
+  end
+  
+  -- Store the tracker function globally for the main system
+  -- Note: The bridge will call this on UPDATE_FACTION events
+  -- Tracker function is passed directly to CreateAchievementRow and stored on row
+  
+  -- Register functions in local registry to reduce global pollution
+  if addon and addon.RegisterAchievementFunction then
+    addon.RegisterAchievementFunction(achId, "IsCompleted", function() 
+      return CheckCompletion()
+    end)
+  end
+  
+  -- Check eligibility - only show if player has the faction in their list and matches class (if specified)
+  local function IsEligible()
+    -- Only register if the player has this faction in their reputation list
+    if not HasFaction() then
+      return false
+    end
+    
+    -- Class: use class file tokens ("MAGE","WARRIOR","ROGUE",...)
+    if class then
+      local _, classFile = UnitClass("player")
+      if classFile ~= class then
+        return false
+      end
+    end
+    
+    return true
+  end
+  
+  ---------------------------------------
+  -- Registration Logic
+  ---------------------------------------
+
+  addon[registerFuncName] = function()
+    if not (addon and addon.CreateAchievementRow) then return end
+    if addon[rowVarName] then return end
+    
+    -- Check if player is eligible for this achievement (has the faction)
+    if not IsEligible() then return end
+    
+    -- Mark as reputation achievement (similar to isDungeonSet for filtering)
+    def.isReputation = true
+    
+    addon[rowVarName] = addon.CreateAchievementRow(
+      nil,
+      achId,
+      title,
+      tooltip,
+      icon,
+      nil, -- No level for reputation achievements
+      points,
+      nil, -- No kill tracker for reputation
+      nil, -- No quest tracker for reputation
+      staticPoints,
+      nil, -- No zone for reputation achievements
+      def
+    )
+    
+    -- Store faction ID on the row for easy access
+    addon[rowVarName].factionId = factionId
+    
+    -- Load completion status from database on registration
+    if WasAlreadyCompleted() then
+      -- Achievement was previously completed - mark row as completed without showing toast
+      MarkCompletionAndShowToast(addon[rowVarName], false)
+    elseif CheckCompletion() then
+      -- Achievement should be completed now (player is exalted) - mark and show toast
+      MarkCompletionAndShowToast(addon[rowVarName], true)
+    end
+    
+    -- Update tooltip after creation to ensure it shows current progress
+    C_Timer.After(0.1, UpdateTooltip)
+  end
+  
+  -- Auto-register the achievement immediately if the panel is ready
+  if addon and addon.CreateAchievementRow then
+    addon[registerFuncName]()
+  end
+  
+  -- Create the event frame dynamically
+  local eventFrame = CreateFrame("Frame")
+  eventFrame:RegisterEvent("PLAYER_LOGIN")
+  eventFrame:RegisterEvent("ADDON_LOADED")
+  eventFrame:RegisterEvent("UPDATE_FACTION")
+  eventFrame:SetScript("OnEvent", function(self, event)
+    if event == "UPDATE_FACTION" then
+      -- Check completion when reputation updates
+      if CheckCompletion() then
+        local row = addon[rowVarName]
+        -- Only show toast if this is a new completion (not loading from database)
+        local showToast = not WasAlreadyCompleted()
+        MarkCompletionAndShowToast(row, showToast)
+      end
+    end
+    addon[registerFuncName]()
+  end)
+  
+  if _G.CharacterFrame and _G.CharacterFrame.HookScript then
+    CharacterFrame:HookScript("OnShow", function()
+      addon[registerFuncName]()
+    end)
+  end
+end
+
+---------------------------------------
+-- Module Export
+---------------------------------------
+
+ReputationCommon.registerReputationAchievement = registerReputationAchievement
+
+if addon then addon.ReputationCommon = ReputationCommon end

@@ -1,0 +1,521 @@
+-- FilterDropdown.lua
+-- Shared filter dropdown implementation for both Character Panel and Embed UI
+-- Contains all filter-related logic including checkbox state management
+
+local addonName, addon = ...
+local CreateFrame = CreateFrame
+local GetExpansionLevel = GetExpansionLevel
+
+local FilterDropdown = {}
+
+-- =========================================================
+-- Checkbox Filter Logic (Core Business Logic)
+-- =========================================================
+
+-- Get status filter states (completed, available, failed) from database with proper defaults
+local function GetStatusFilterStates()
+    local statusFilters = { true, true, true }  -- completed, available, failed (all default to true)
+    local getCharDB = addon and addon.GetCharDB
+    if type(getCharDB) == "function" then
+        local _, cdb = getCharDB()
+        if cdb and cdb.settings and cdb.settings.statusFilters then
+            local states = cdb.settings.statusFilters
+            if type(states) == "table" then
+                statusFilters = {
+                    states[1] ~= false,  -- Completed (default true)
+                    states[2] ~= false,  -- Available (default true)
+                    states[3] ~= false,  -- Failed (default true)
+                }
+            end
+        end
+    end
+    return statusFilters
+end
+
+-- Save status filter states to character database
+local function SaveStatusFilterStates(statusFilters)
+    local getCharDB = addon and addon.GetCharDB
+    if type(getCharDB) == "function" then
+        local _, cdb = getCharDB()
+        if cdb then
+            cdb.settings = cdb.settings or {}
+            cdb.settings.statusFilters = {
+                statusFilters[1] == true,  -- Completed
+                statusFilters[2] == true,  -- Available
+                statusFilters[3] == true,  -- Failed
+            }
+        end
+    end
+end
+
+-- Get checkbox states from database with proper defaults
+local function GetCheckboxStates()
+    local checkboxStates = { true, true, true, true, true, true, false, false, false, false, false, false, false, false }
+    local getCharDB = addon and addon.GetCharDB
+    if type(getCharDB) == "function" then
+        local _, cdb = getCharDB()
+        if cdb and cdb.settings and cdb.settings.filterCheckboxes then
+            local states = cdb.settings.filterCheckboxes
+            if type(states) == "table" then
+                checkboxStates = {
+                    states[1] ~= false,  -- Quest (default true)
+                    states[2] ~= false,  -- Dungeon (default true)
+                    states[3] ~= false,  -- Heroic Dungeon (default true)
+                    states[4] ~= false,  -- Raid (default true)
+                    states[5] ~= false,  -- Professions (default true)
+                    states[6] ~= false,  -- Meta (default true)
+                    states[7] == true,  -- Reputations
+                    states[8] == true,  -- Exploration
+                    states[9] == true,  -- Dungeon Sets
+                    states[10] == true,  -- Solo
+                    states[11] == true,  -- Duo
+                    states[12] == true,  -- Trio
+                    states[13] == true,  -- Ridiculous
+                    states[14] == true,  -- Secret
+                    states[15] == true,  -- Rares
+                }
+            end
+        end
+    end
+    return checkboxStates
+end
+
+-- Save checkbox states to character database
+local function SaveCheckboxStates(checkboxStates)
+    local getCharDB = addon and addon.GetCharDB
+    if type(getCharDB) == "function" then
+        local _, cdb = getCharDB()
+        if cdb then
+            cdb.settings = cdb.settings or {}
+            cdb.settings.filterCheckboxes = {
+                checkboxStates[1] == true,  -- Quest
+                checkboxStates[2] == true,  -- Dungeon
+                checkboxStates[3] == true,  -- Heroic Dungeon
+                checkboxStates[4] == true,  -- Raid
+                checkboxStates[5] == true,  -- Professions
+                checkboxStates[6] == true,  -- Meta
+                checkboxStates[7] == true,  -- Reputations
+                checkboxStates[8] == true,  -- Exploration
+                checkboxStates[9] == true,  -- Dungeon Sets
+                checkboxStates[10] == true,  -- Solo
+                checkboxStates[11] == true,  -- Duo
+                checkboxStates[12] == true,  -- Trio
+                checkboxStates[13] == true,  -- Ridiculous
+                checkboxStates[14] == true,  -- Secret
+                checkboxStates[15] == true,  -- Rares
+            }
+        end
+    end
+end
+
+-- Check if achievement should be shown based on checkbox filter
+-- Returns true if should show, false if should hide
+local function ShouldShowByCheckboxFilter(def, isCompleted, checkboxIndex, variationType)
+    local checkboxStates = GetCheckboxStates()
+    
+    -- For variations, check based on variation type
+    if variationType then
+        if variationType == "Trio" then
+            return checkboxStates[12]
+        elseif variationType == "Duo" then
+            return checkboxStates[11]
+        elseif variationType == "Solo" then
+            return checkboxStates[10]
+        end
+        return false
+    end
+    
+    -- For other types, check the specified checkbox index
+    if checkboxIndex then
+        return checkboxStates[checkboxIndex]
+    end
+    
+    return true -- Default to showing if no checkbox specified
+end
+
+-- =========================================================
+-- UI Helper Functions
+-- =========================================================
+
+-- Helper function to get checkbox states from database (internal use)
+local function GetCheckboxStatesFromDB()
+    return GetCheckboxStates()
+end
+
+-- Helper function to save checkbox states to database (internal use)
+local function SaveCheckboxStatesToDB(checkboxStates)
+    SaveCheckboxStates(checkboxStates)
+end
+
+-- Default filter list (no longer used - status filters are now checkboxes)
+local function GetDefaultFilterList()
+    return {}
+end
+
+-- Helper function to get player class color
+local function GetPlayerClassColor()
+    local _, class = UnitClass("player")
+    if class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class] then
+        local color = RAID_CLASS_COLORS[class]
+        return color.r, color.g, color.b
+    end
+    return 1, 1, 1  -- Default to white if no class color found
+end
+
+-- Create and style the dropdown frame
+local function CreateDropdown(self, parent, anchorPoint, anchorTo, xOffset, yOffset, width)
+    local dropdown = CreateFrame("Frame", nil, parent, "UIDropDownMenuTemplate")
+    
+    -- Apply custom styling (hide default textures, add custom background)
+    dropdown.Left:Hide()
+    dropdown.Middle:Hide()
+    dropdown.Right:Hide()
+    
+    local bg = dropdown:CreateTexture(nil, "BACKGROUND")
+    bg:SetPoint("TOPLEFT", -4, 0)
+    bg:SetPoint("BOTTOMRIGHT", -17, 9)
+    bg:SetTexture("Interface\\AddOns\\CustomGuildAchievements\\Images\\dropdown.png")
+    
+    -- Position the dropdown
+    dropdown:SetPoint(anchorPoint or "TOPRIGHT", anchorTo or parent, anchorPoint or "TOPRIGHT", xOffset or -17, yOffset or -50)
+    UIDropDownMenu_SetWidth(dropdown, width or 85)
+    UIDropDownMenu_SetText(dropdown, "Filters")
+    
+    -- Style the button with custom arrow
+    local button = dropdown.Button
+    button:ClearAllPoints()
+    button:SetPoint("RIGHT", dropdown, "RIGHT", -16, 4)
+    button:SetNormalTexture("Interface\\AddOns\\CustomGuildAchievements\\Images\\dropdown_arrow_down.png")
+    button:SetPushedTexture("Interface\\AddOns\\CustomGuildAchievements\\Images\\dropdown_arrow_down.png")
+    button:SetDisabledTexture("Interface\\AddOns\\CustomGuildAchievements\\Images\\dropdown_arrow_down.png")
+    
+    local normalTexture = button:GetNormalTexture()
+    local pushedTexture = button:GetPushedTexture()
+    local disabledTexture = button:GetDisabledTexture()
+    
+    local arrowR, arrowG, arrowB = GetPlayerClassColor()
+    
+    for _, tex in ipairs({ normalTexture, pushedTexture, disabledTexture }) do
+        if tex then
+            tex:ClearAllPoints()
+            tex:SetPoint("CENTER", button, "CENTER", 0, 0)
+            tex:SetSize(20, 20)
+            tex:SetVertexColor(arrowR, arrowG, arrowB)
+        end
+    end
+    
+    return dropdown
+end
+
+-- Initialize dropdown menu with filters, separator, and checkboxes
+local function InitializeDropdown(self, dropdown, config)
+    config = config or {}
+    
+    -- Get callbacks and state
+    local onFilterChange = config.onFilterChange or function() end
+    local onCheckboxChange = config.onCheckboxChange or function() end
+    local onStatusFilterChange = config.onStatusFilterChange or function() end
+    -- Load checkbox states from database if not provided in config
+    local checkboxStates = config.checkboxStates
+    if not checkboxStates then
+        checkboxStates = GetCheckboxStatesFromDB()
+    end
+    -- Load status filter states from database if not provided in config
+    local statusFilters = config.statusFilters
+    if not statusFilters then
+        statusFilters = GetStatusFilterStates()
+    end
+    local checkboxLabels = config.checkboxLabels or { "Show Dungeon Trios", "Show Dungeon Duos", "Show Dungeon Solos" }
+    local filterList = config.filterList or GetDefaultFilterList()
+    
+    -- Store state on the dropdown for access in callbacks
+    dropdown._checkboxStates = checkboxStates  -- Initial state, will be reloaded from DB on each open
+    dropdown._statusFilters = statusFilters  -- Initial state, will be reloaded from DB on each open
+    dropdown._onFilterChange = onFilterChange
+    dropdown._onCheckboxChange = onCheckboxChange
+    dropdown._onStatusFilterChange = onStatusFilterChange
+    dropdown._checkboxLabels = checkboxLabels
+    dropdown._filterList = filterList
+    
+    UIDropDownMenu_Initialize(dropdown, function(self, level)
+        if level == 1 then
+            -- Reload checkbox states from database each time dropdown opens (for sync between frames)
+            dropdown._checkboxStates = GetCheckboxStatesFromDB()
+            -- Reload status filter states from database each time dropdown opens
+            dropdown._statusFilters = GetStatusFilterStates()
+            
+            -- Add "Filter By" section title
+            local filterByTitleInfo = UIDropDownMenu_CreateInfo()
+            filterByTitleInfo.text = "Filter By"
+            filterByTitleInfo.isTitle = true
+            filterByTitleInfo.isUninteractable = true
+            filterByTitleInfo.notCheckable = true
+            filterByTitleInfo.disabled = true
+            UIDropDownMenu_AddButton(filterByTitleInfo)
+            
+            -- Add status filter checkboxes (Completed, Available, Failed)
+            local statusFilterLabels = { "Completed", "Available", "Failed" }
+            for i = 1, 3 do
+                local info = UIDropDownMenu_CreateInfo()
+                local statusIndex = i  -- Capture index in local variable
+                info.text = statusFilterLabels[statusIndex]
+                info.checked = dropdown._statusFilters[statusIndex]
+                info.isNotRadio = true
+                info.keepShownOnClick = true
+                info.func = function(self)
+                    -- Toggle the state
+                    dropdown._statusFilters[statusIndex] = not dropdown._statusFilters[statusIndex]
+                    local newState = dropdown._statusFilters[statusIndex]
+                    
+                    -- Update the button's checked property
+                    self.checked = newState
+                    
+                    -- Manually toggle the checkmark textures for immediate visual feedback
+                    local buttonName = self:GetName()
+                    local checkTexture = _G[buttonName .. "Check"]
+                    local uncheckTexture = _G[buttonName .. "UnCheck"]
+                    if checkTexture and uncheckTexture then
+                        if newState then
+                            checkTexture:Show()
+                            uncheckTexture:Hide()
+                        else
+                            checkTexture:Hide()
+                            uncheckTexture:Show()
+                        end
+                    end
+                    
+                    -- Save to database
+                    SaveStatusFilterStates(dropdown._statusFilters)
+                    
+                    -- Call the callback
+                    if dropdown._onStatusFilterChange then
+                        dropdown._onStatusFilterChange(statusIndex, newState)
+                    end
+                end
+                UIDropDownMenu_AddButton(info)
+            end
+            
+            -- Add separator
+            local separatorInfo = UIDropDownMenu_CreateInfo()
+            separatorInfo.hasArrow = false
+            separatorInfo.dist = 0
+            separatorInfo.isTitle = true
+            separatorInfo.isUninteractable = true
+            separatorInfo.notCheckable = true
+            separatorInfo.iconOnly = true
+            separatorInfo.icon = "Interface\\Common\\UI-TooltipDivider-Transparent"
+            separatorInfo.tCoordLeft = 0
+            separatorInfo.tCoordRight = 1
+            separatorInfo.tCoordTop = 0
+            separatorInfo.tCoordBottom = 1
+            separatorInfo.tSizeX = 0
+            separatorInfo.tSizeY = 8
+            separatorInfo.tFitDropDownSizeX = true
+            separatorInfo.iconInfo = {
+                tCoordLeft = 0,
+                tCoordRight = 1,
+                tCoordTop = 0,
+                tCoordBottom = 1,
+                tSizeX = 0,
+                tSizeY = 8,
+                tFitDropDownSizeX = true
+            }
+            UIDropDownMenu_AddButton(separatorInfo)
+            
+            -- Add "Core Achievements" section title
+            local coreTitleInfo = UIDropDownMenu_CreateInfo()
+            coreTitleInfo.text = "Core Achievements"
+            coreTitleInfo.isTitle = true
+            coreTitleInfo.isUninteractable = true
+            coreTitleInfo.notCheckable = true
+            coreTitleInfo.disabled = true
+            UIDropDownMenu_AddButton(coreTitleInfo)
+            
+            -- Add Core checkboxes (indices 1-6: Quest, Dungeon, Heroic Dungeon, Raid, Professions, Meta)
+            local isTBC = GetExpansionLevel and GetExpansionLevel() > 0
+            for i = 1, 6 do
+                -- Skip Heroic Dungeon (index 3) if not TBC
+                if not (i == 3 and not isTBC) then
+                    local info = UIDropDownMenu_CreateInfo()
+                    local checkboxIndex = i  -- Capture index in local variable
+                    info.text = checkboxLabels[checkboxIndex]
+                    info.checked = dropdown._checkboxStates[checkboxIndex]
+                    info.isNotRadio = true
+                    info.keepShownOnClick = true
+                    info.func = function(self)
+                        -- Toggle the state
+                        dropdown._checkboxStates[checkboxIndex] = not dropdown._checkboxStates[checkboxIndex]
+                        local newState = dropdown._checkboxStates[checkboxIndex]
+                        
+                        -- Update the button's checked property
+                        self.checked = newState
+                        
+                        -- Manually toggle the checkmark textures for immediate visual feedback
+                        local buttonName = self:GetName()
+                        local checkTexture = _G[buttonName .. "Check"]
+                        local uncheckTexture = _G[buttonName .. "UnCheck"]
+                        if checkTexture and uncheckTexture then
+                            if newState then
+                                checkTexture:Show()
+                                uncheckTexture:Hide()
+                            else
+                                checkTexture:Hide()
+                                uncheckTexture:Show()
+                            end
+                        end
+                        
+                        -- Save to database
+                        SaveCheckboxStatesToDB(dropdown._checkboxStates)
+                        
+                        -- Call the callback
+                        if dropdown._onCheckboxChange then
+                            dropdown._onCheckboxChange(checkboxIndex, newState)
+                        end
+                    end
+                    UIDropDownMenu_AddButton(info)
+                end
+            end
+            
+            -- Add separator
+            UIDropDownMenu_AddButton(separatorInfo)
+            
+            -- Add "Miscellaneous" section title
+            local miscTitleInfo = UIDropDownMenu_CreateInfo()
+            miscTitleInfo.text = "Miscellaneous"
+            miscTitleInfo.isTitle = true
+            miscTitleInfo.isUninteractable = true
+            miscTitleInfo.notCheckable = true
+            miscTitleInfo.disabled = true
+            UIDropDownMenu_AddButton(miscTitleInfo)
+            
+            -- Add Miscellaneous checkboxes (indices 7-14: Reputations, Exploration, Dungeon Sets, Solo, Duo, Trio, Ridiculous, Secret)
+            for i = 7, 15 do
+                local info = UIDropDownMenu_CreateInfo()
+                local checkboxIndex = i  -- Capture index in local variable
+                info.text = checkboxLabels[checkboxIndex]
+                info.checked = dropdown._checkboxStates[checkboxIndex]
+                info.isNotRadio = true
+                info.keepShownOnClick = true
+                info.func = function(self)
+                    -- Toggle the state
+                    dropdown._checkboxStates[checkboxIndex] = not dropdown._checkboxStates[checkboxIndex]
+                    local newState = dropdown._checkboxStates[checkboxIndex]
+                    
+                    -- Update the button's checked property
+                    self.checked = newState
+                    
+                    -- Manually toggle the checkmark textures for immediate visual feedback
+                    local buttonName = self:GetName()
+                    local checkTexture = _G[buttonName .. "Check"]
+                    local uncheckTexture = _G[buttonName .. "UnCheck"]
+                    if checkTexture and uncheckTexture then
+                        if newState then
+                            checkTexture:Show()
+                            uncheckTexture:Hide()
+                        else
+                            checkTexture:Hide()
+                            uncheckTexture:Show()
+                        end
+                    end
+                    
+                    -- Save to database
+                    SaveCheckboxStatesToDB(dropdown._checkboxStates)
+                    
+                    -- Call the callback
+                    if dropdown._onCheckboxChange then
+                        dropdown._onCheckboxChange(checkboxIndex, newState)
+                    end
+                end
+                UIDropDownMenu_AddButton(info)
+            end
+        end
+    end)
+    
+    -- Set initial dropdown text (no selection for radio buttons, so just show "Filters")
+    UIDropDownMenu_SetText(dropdown, "Filters")
+end
+
+-- Get current filter value (deprecated - use GetStatusFilterStates instead)
+local function GetCurrentFilter(self, dropdown)
+    -- Return empty string as we no longer use a single filter value
+    return ""
+end
+
+-- Get status filter states from dropdown (method)
+local function GetStatusFilterStatesFromDropdown(self, dropdown)
+    if dropdown and dropdown._statusFilters then
+        return dropdown._statusFilters
+    end
+    return GetStatusFilterStates()
+end
+
+-- Get checkbox state
+local function GetCheckboxState(self, dropdown, index)
+    if dropdown._checkboxStates and dropdown._checkboxStates[index] then
+        return dropdown._checkboxStates[index]
+    end
+    return false
+end
+
+-- Set checkbox state
+local function SetCheckboxState(self, dropdown, index, state)
+    if dropdown._checkboxStates then
+        dropdown._checkboxStates[index] = state
+        -- Re-initialize to update visual state
+        InitializeDropdown(self, dropdown, {
+            currentFilter = dropdown._currentFilter,
+            checkboxStates = dropdown._checkboxStates,
+            onFilterChange = dropdown._onFilterChange,
+            onCheckboxChange = dropdown._onCheckboxChange,
+            checkboxLabels = dropdown._checkboxLabels,
+            filterList = dropdown._filterList,
+        })
+    end
+end
+
+-- Helper function to create and initialize a complete filter dropdown with standard configuration
+local function CreateAndInitializeDropdown(self, parent, positionConfig, callbacks)
+    positionConfig = positionConfig or {}
+    callbacks = callbacks or {}
+    
+    local anchorPoint = positionConfig.anchorPoint or "TOPRIGHT"
+    local anchorTo = positionConfig.anchorTo or parent
+    local xOffset = positionConfig.xOffset or -20
+    local yOffset = positionConfig.yOffset or -52
+    local width = positionConfig.width or 60
+    
+    local dropdown = CreateDropdown(self, parent, anchorPoint, anchorTo, xOffset, yOffset, width)
+    
+    local checkboxLabels = { 
+        "Quests", "Dungeons", "Heroic Dungeons", "Raids", "Professions", "Meta", 
+        "Reputations", "Exploration", "Dungeon Sets", "Solo Dungeons", "Duo Dungeons", 
+        "Trio Dungeons", "Ridiculous", "Secret", "Rares" 
+    }
+    
+    InitializeDropdown(self, dropdown, {
+        checkboxLabels = checkboxLabels,
+        onFilterChange = callbacks.onFilterChange or function() end,
+        onCheckboxChange = callbacks.onCheckboxChange or function() end,
+        onStatusFilterChange = callbacks.onStatusFilterChange or function() end,
+    })
+    
+    return dropdown
+end
+
+FilterDropdown.GetStatusFilterStates = GetStatusFilterStates
+FilterDropdown.SaveStatusFilterStates = SaveStatusFilterStates
+FilterDropdown.GetCheckboxStates = GetCheckboxStates
+FilterDropdown.SaveCheckboxStates = SaveCheckboxStates
+FilterDropdown.ShouldShowByCheckboxFilter = ShouldShowByCheckboxFilter
+FilterDropdown.CreateDropdown = CreateDropdown
+FilterDropdown.InitializeDropdown = InitializeDropdown
+FilterDropdown.GetCurrentFilter = GetCurrentFilter
+FilterDropdown.GetStatusFilterStatesFromDropdown = GetStatusFilterStatesFromDropdown
+FilterDropdown.GetCheckboxState = GetCheckboxState
+FilterDropdown.SetCheckboxState = SetCheckboxState
+FilterDropdown.CreateAndInitializeDropdown = CreateAndInitializeDropdown
+
+if addon then
+    addon.FilterDropdown = FilterDropdown
+end
+
