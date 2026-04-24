@@ -264,6 +264,77 @@ local function ShowTargetRequirements(achId, requiredTarget, targetOrder, achiev
     end
 end
 
+-- Show required NPC talk-to targets (talkedTo), white = done, gray = not yet.
+-- Same shape as requiredTarget: { [npcId]=1 } or { [slot]={id1,id2,...} }.
+local function ShowTalkToRequirements(achId, requiredTalkTo, talkToOrder, achievementCompleted, def, achDef)
+    if not requiredTalkTo or next(requiredTalkTo) == nil then
+        return
+    end
+    GameTooltip:AddLine("\nRequired Talk-To:", 0, 1, 0)
+    local progress = addon and addon.GetProgress and addon.GetProgress(achId)
+    local talked = {}
+    if progress and type(progress.talkedTo) == "table" then
+        for k, v in pairs(progress.talkedTo) do
+            if v then
+                talked[k] = true
+                local kn = tonumber(k)
+                if kn then talked[kn] = true end
+            end
+        end
+    end
+    local isRaid = (def and def.isRaid) or (achDef and achDef.isRaid)
+    local getBossNameFn = isRaid and (addon and addon.GetRaidBossName) or (addon and addon.GetBossName)
+    local function processTalkEntry(npcId, need)
+        local done = achievementCompleted
+        local displayName = ""
+        if type(need) == "table" then
+            local names = {}
+            for _, id in pairs(need) do
+                local idn = tonumber(id) or id
+                if not done and (talked[idn] or talked[id] or talked[tostring(idn)]) then
+                    done = true
+                end
+                table_insert(names, (getBossNameFn and getBossNameFn(idn)) or ("Mob #" .. tostring(idn)))
+            end
+            if type(npcId) == "string" then
+                displayName = npcId
+            else
+                displayName = table_concat(names, " / ")
+            end
+        else
+            local idNum = tonumber(npcId) or npcId
+            displayName = (getBossNameFn and getBossNameFn(idNum)) or ("Mob #" .. tostring(idNum))
+            if not done then
+                done = talked[idNum] or talked[tostring(idNum)] or talked[npcId]
+            end
+        end
+        if done then
+            GameTooltip:AddLine(displayName, 1, 1, 1)
+        else
+            GameTooltip:AddLine(displayName, 0.5, 0.5, 0.5)
+        end
+    end
+    if talkToOrder and #talkToOrder > 0 then
+        for _, npcId in ipairs(talkToOrder) do
+            local need = requiredTalkTo[npcId]
+            if need then
+                processTalkEntry(npcId, need)
+            end
+        end
+    else
+        local keys = {}
+        for npcId, _ in pairs(requiredTalkTo) do
+            table_insert(keys, npcId)
+        end
+        table_sort(keys, function(a, b)
+            return (tonumber(a) or 0) < (tonumber(b) or 0)
+        end)
+        for _, npcId in ipairs(keys) do
+            processTalkEntry(npcId, requiredTalkTo[npcId])
+        end
+    end
+end
+
 -- Show item requirements in tooltip
 local function ShowItemRequirements(requiredItems, itemOrder, achievementCompleted)
     if not requiredItems or type(requiredItems) ~= "table" or #requiredItems == 0 then
@@ -402,6 +473,8 @@ local function ShowAchievementTooltip(frame, data)
     local requiredKills = extracted.requiredKills
     local requiredTarget = extracted.requiredTarget
     local targetOrder = extracted.targetOrder
+    local requiredTalkTo = extracted.requiredTalkTo
+    local talkToOrder = extracted.talkToOrder
     local requiredItems = extracted.requiredItems
     local itemOrder = extracted.itemOrder
     local requiredAchievements = extracted.requiredAchievements
@@ -544,6 +617,9 @@ local function ShowAchievementTooltip(frame, data)
         if achDef.targetOrder then
             targetOrder = achDef.targetOrder
         end
+        if achDef.requiredTalkTo then
+            requiredTalkTo = achDef.requiredTalkTo
+        end
         if achDef.requiredItems then
             requiredItems = achDef.requiredItems
         end
@@ -570,6 +646,9 @@ local function ShowAchievementTooltip(frame, data)
         if def.targetOrder then
             targetOrder = def.targetOrder
         end
+        if def.requiredTalkTo then
+            requiredTalkTo = def.requiredTalkTo
+        end
         if def.requiredItems then
             requiredItems = def.requiredItems
         end
@@ -591,6 +670,7 @@ local function ShowAchievementTooltip(frame, data)
     local bossOrder = achDef and achDef.bossOrder
     ShowBossRequirements(achId, requiredKills, bossOrder, achievementCompleted, def, achDef)
     ShowTargetRequirements(achId, requiredTarget, targetOrder, achievementCompleted, def, achDef)
+    ShowTalkToRequirements(achId, requiredTalkTo, talkToOrder, achievementCompleted, def, achDef)
     
     -- Show item requirements if available
     ShowItemRequirements(requiredItems, itemOrder, achievementCompleted)

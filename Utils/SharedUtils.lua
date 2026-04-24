@@ -233,6 +233,7 @@ local function RegisterAchievementDef(def, overrides)
         targetNpcId = def.targetNpcId,
         requiredKills = def.requiredKills,
         requiredTarget = def.requiredTarget,
+        requiredTalkTo = def.requiredTalkTo,
         -- Optional display order for requiredTarget lists (tracker/tooltip); never used for completion logic.
         targetOrder = def.targetOrder,
         requiredQuestId = def.requiredQuestId,
@@ -248,6 +249,7 @@ local function RegisterAchievementDef(def, overrides)
         race = def.race,
         class = def.class,
         zone = def.zone,
+        zoneAccurate = def.zoneAccurate,
         explorationZone = def.explorationZone,
         explorationThreshold = def.explorationThreshold,
         -- Type flags

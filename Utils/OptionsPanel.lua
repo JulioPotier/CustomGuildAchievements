@@ -773,7 +773,7 @@ local function CreateOptionsPanel()
     end
     
     -- Register with Settings API (newer API for Classic Era)
-    local category = Settings.RegisterCanvasLayoutCategory(panel, "Hardcore Achievements")
+    local category = Settings.RegisterCanvasLayoutCategory(panel, "Custom Guild Achievements")
     Settings.RegisterAddOnCategory(category)
     
     -- Store category in addon table (similar to BugSack pattern)

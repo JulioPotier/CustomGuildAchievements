@@ -3332,7 +3332,7 @@ local function HookSourceSignals()
   DASHBOARD._hooked = true
 end
 
--- Apply tab selection + scroll after dashboard Show/Rebuild (used for /hca log and any deferred open).
+-- Apply tab selection + scroll after dashboard Show/Rebuild (used for /cga log and any deferred open).
 local function FinishDashboardOpenToTab(tabKey)
   if not tabKey or not (DashboardFrame and DashboardFrame:IsShown()) then
     return
@@ -3412,7 +3412,7 @@ f:RegisterEvent("ADDON_LOADED")
 f:SetScript("OnEvent", function(self, event, addonName)
   if event == "ADDON_LOADED" and addonName == ADDON_NAME then
     HookSourceSignals()
-    -- Dashboard starts hidden, user can open with /hca dashboard or similar command
+    -- Dashboard starts hidden, user can open with /cga dashboard or similar command
   elseif event == "PLAYER_LOGIN" then
     HookSourceSignals()
   end

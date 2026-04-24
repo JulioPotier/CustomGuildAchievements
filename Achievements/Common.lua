@@ -115,6 +115,34 @@ function M.registerQuestAchievement(cfg)
 
     local MAX_LEVEL = tonumber(cfg.maxLevel)
     local FACTION, RACE, CLASS = cfg.faction, cfg.race, cfg.class
+    local ZONE_ACCURATE = tonumber(cfg.zoneAccurate)
+
+    -- UiMapID check: unset or <=0 = no constraint; else player must be on required map or a child (walk parents from current map).
+    local function playerOnRequiredUiMap(requiredUiMapId)
+        if not requiredUiMapId or requiredUiMapId <= 0 then
+            return true
+        end
+        if not (C_Map and C_Map.GetBestMapForUnit and C_Map.GetMapInfo) then
+            return false
+        end
+        local id = C_Map.GetBestMapForUnit("player")
+        if not id then
+            return false
+        end
+        local guard = 0
+        while id and guard < 40 do
+            guard = guard + 1
+            if id == requiredUiMapId then
+                return true
+            end
+            local info = C_Map.GetMapInfo(id)
+            if not info or not info.parentMapID or info.parentMapID == 0 then
+                break
+            end
+            id = info.parentMapID
+        end
+        return false
+    end
 
     ---------------------------------------
     -- Helper Functions
@@ -790,6 +818,13 @@ function M.registerQuestAchievement(cfg)
             end
             
             if not killValidated then
+                return false
+            end
+
+            if ZONE_ACCURATE and not playerOnRequiredUiMap(ZONE_ACCURATE) then
+                if addon.EventLogAdd then
+                    addon.EventLogAdd("NPC kill not counted (zoneAccurate): achievement " .. tostring(ACH_ID) .. ", npcId " .. tostring(destId))
+                end
                 return false
             end
             

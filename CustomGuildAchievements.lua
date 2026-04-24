@@ -1424,26 +1424,73 @@ local function CheckPendingCompletions()
     for _, row in ipairs(rows) do
         -- Check both row.completed and database to prevent re-completion
         if not IsAchievementAlreadyCompleted(row) then
-            -- Check row.customIsCompleted first (most common for milestone/profession achievements)
-            local fn = row.customIsCompleted
-            if type(fn) ~= "function" then
+            local completedThisRow = false
+
+            -- New completion type: requiredTalkTo (NPC dialog/gossip opened)
+            local def = row and row._def
+            if def and type(def.requiredTalkTo) == "table" and addon and addon.GetProgress then
                 local id = row.id or row.achId
-                if id and addon and addon.GetCustomIsCompleted then
-                    fn = addon.GetCustomIsCompleted(id)
-                end
-                if type(fn) ~= "function" and id and addon and addon.GetAchievementFunction then
-                    fn = addon.GetAchievementFunction(id, "IsCompleted")
+                if id then
+                    local p = addon.GetProgress(id) or {}
+                    local talkedTo = p and p.talkedTo
+                    local required = def.requiredTalkTo
+                    local satisfied = 0
+                    local requiredCount = 0
+                    if type(required) == "table" then
+                        for npcId, need in pairs(required) do
+                            requiredCount = requiredCount + 1
+                            local done = false
+                            if type(need) == "table" then
+                                for _, anyId in pairs(need) do
+                                    local anyNum = tonumber(anyId) or anyId
+                                    if talkedTo and (talkedTo[anyNum] or talkedTo[tostring(anyNum)] or talkedTo[anyId]) then
+                                        done = true
+                                        break
+                                    end
+                                end
+                            else
+                                local n = tonumber(npcId) or npcId
+                                if talkedTo and (talkedTo[n] or talkedTo[tostring(n)] or talkedTo[npcId]) then
+                                    done = true
+                                end
+                            end
+                            if done then
+                                satisfied = satisfied + 1
+                            end
+                        end
+                    end
+                    if requiredCount > 0 and satisfied >= requiredCount then
+                        MarkRowCompleted(row)
+                        local iconTex = (row.frame and row.frame.Icon and row.frame.Icon.GetTexture and row.frame.Icon:GetTexture()) or row.icon or 136116
+                        local titleText = (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or row.title or "Achievement"
+                        CreateAchToast(iconTex, titleText, row.points or 0, row.frame or row)
+                        completedThisRow = true
+                    end
                 end
             end
-            
-            if type(fn) == "function" then
-                -- Pass current level to support level milestone achievements that accept newLevel parameter
-                local ok, result = pcall(fn, currentLevel)
-                if ok and result == true then
-                    MarkRowCompleted(row)
-                    local iconTex = (row.frame and row.frame.Icon and row.frame.Icon.GetTexture and row.frame.Icon:GetTexture()) or row.icon or 136116
-                    local titleText = (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or row.title or "Achievement"
-                    CreateAchToast(iconTex, titleText, row.points or 0, row.frame or row)
+
+            if not completedThisRow then
+                -- Check row.customIsCompleted first (most common for milestone/profession achievements)
+                local fn = row.customIsCompleted
+                if type(fn) ~= "function" then
+                    local id = row.id or row.achId
+                    if id and addon and addon.GetCustomIsCompleted then
+                        fn = addon.GetCustomIsCompleted(id)
+                    end
+                    if type(fn) ~= "function" and id and addon and addon.GetAchievementFunction then
+                        fn = addon.GetAchievementFunction(id, "IsCompleted")
+                    end
+                end
+                
+                if type(fn) == "function" then
+                    -- Pass current level to support level milestone achievements that accept newLevel parameter
+                    local ok, result = pcall(fn, currentLevel)
+                    if ok and result == true then
+                        MarkRowCompleted(row)
+                        local iconTex = (row.frame and row.frame.Icon and row.frame.Icon.GetTexture and row.frame.Icon:GetTexture()) or row.icon or 136116
+                        local titleText = (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or row.title or "Achievement"
+                        CreateAchToast(iconTex, titleText, row.points or 0, row.frame or row)
+                    end
                 end
             end
         end
@@ -2006,7 +2053,7 @@ local function OpenOptionsPanel()
         end
     end
     if InterfaceOptionsFrame_OpenToCategory then
-        InterfaceOptionsFrame_OpenToCategory("Hardcore Achievements")
+        InterfaceOptionsFrame_OpenToCategory("Custom Guild Achievements")
     end
 end
 
@@ -2063,7 +2110,7 @@ local function InitializeMinimapButton()
                 end
             end,
             OnTooltipShow = function(tooltip)
-                tooltip:AddLine("Hardcore Achievements", 1, 1, 1)
+                tooltip:AddLine("Custom Guild Achievements", 1, 1, 1)
 
                 tooltip:AddLine("Left-click to open Dashboard", 0.5, 0.5, 0.5)
                 tooltip:AddLine("Right-click to open Options", 0.5, 0.5, 0.5)
@@ -3862,6 +3909,273 @@ do
             return npcId and tonumber(npcId) or nil
         end
 
+        -- requiredTarget-style helper: supports { [npcId]=1 } and { [slot]={id1,id2,...} }.
+        local function RequiredNpcListContains(required, npcId)
+            if type(required) ~= "table" or not npcId then return false end
+            if required[npcId] ~= nil or required[tostring(npcId)] ~= nil then
+                return true
+            end
+            for _, v in pairs(required) do
+                if type(v) == "table" then
+                    for _, id in pairs(v) do
+                        local idn = tonumber(id) or id
+                        if idn == npcId or tostring(idn) == tostring(npcId) then
+                            return true
+                        end
+                    end
+                end
+            end
+            return false
+        end
+
+        local function HandleTalkedToEvent()
+            if not addon or addon.Disabled then return end
+            if not (addon.GetProgress and addon.SetProgress) then return end
+
+            local guid = UnitGUID("npc") or UnitGUID("target")
+            local npcId = getNpcIdFromGUID(guid)
+            if not npcId then return end
+
+            for _, row in ipairs(addon.AchievementRowModel or {}) do
+                if row and not IsAchievementAlreadyCompleted(row) then
+                    local def = row._def
+                    local requiredTalkTo = def and def.requiredTalkTo
+                    if requiredTalkTo and RequiredNpcListContains(requiredTalkTo, npcId) then
+                        local id = row.id or row.achId
+                        if id then
+                            local p = addon.GetProgress(id) or {}
+                            local talkedTo = type(p.talkedTo) == "table" and p.talkedTo or {}
+                            if not talkedTo[npcId] then
+                                talkedTo[npcId] = true
+                                addon.SetProgress(id, "talkedTo", talkedTo)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        -- Test UI: attach a small configurable frame to the NPC dialog for specific NPC IDs.
+        -- Config table supports:
+        -- - text: string (displayed on the left)
+        -- - achievementId: string (reserved for later; no side-effects yet)
+        -- - buttonLabel: string|nil (if nil, no button is shown)
+        -- - onClick: function(cfg, npcId, parentFrame) (optional callback invoked on click)
+        local TALK_UI_NPC_CONFIG = {
+            [1749] = {
+                text = "CustomGuildAchievements test UI",
+                achievementId = "GUILD-TALK-KATRANA-1749",
+                buttonLabel = "Goodbye",
+                onClick = function(cfg, npcId, parentFrame)
+                    -- placeholder test callback
+                end,
+            }, -- Lady Katrana Prestor (test)
+        }
+
+        local function HideNpcDialogButtonFrame()
+            local f = addon and addon.NpcDialogButtonFrame
+            if f and f.Hide then
+                f:Hide()
+            end
+            local b = addon and addon.NpcDialogOverlayButton
+            if b and b.Hide then
+                b:Hide()
+            end
+        end
+
+        local function ShowNpcDialogButtonFrame()
+            if not addon or addon.Disabled then return end
+            local guid = UnitGUID("npc") or UnitGUID("target")
+            local npcId = getNpcIdFromGUID(guid)
+            local cfg = npcId and TALK_UI_NPC_CONFIG[npcId] or nil
+            if not npcId or not cfg then
+                HideNpcDialogButtonFrame()
+                return
+            end
+
+            local parent = nil
+            if GossipFrame and GossipFrame.IsShown and GossipFrame:IsShown() then
+                parent = GossipFrame
+            elseif QuestFrame and QuestFrame.IsShown and QuestFrame:IsShown() then
+                parent = QuestFrame
+            else
+                -- Fallback: try the most likely one
+                parent = GossipFrame or QuestFrame
+            end
+            if not parent then return end
+
+            local f = addon.NpcDialogButtonFrame
+            if not f then
+                f = CreateFrame("Frame", nil, parent, "BackdropTemplate")
+                addon.NpcDialogButtonFrame = f
+                f:SetFrameStrata("DIALOG")
+                f:SetFrameLevel((parent.GetFrameLevel and parent:GetFrameLevel() or 0) + 10)
+                f:SetSize(310, 60)
+                f:SetBackdrop({
+                    -- Parchment-style background to match gossip/quest UI
+                    bgFile = "Interface\\QuestFrame\\QuestBG-Tile",
+                    --edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+                    tile = true, tileSize = 32, edgeSize = 12,
+                    insets = { left = 3, right = 3, top = 3, bottom = 3 }
+                })
+                -- Slight tint so text stays readable
+                f:SetBackdropColor(1, 0.98, 0.9, 0.95)
+
+                local label = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                label:SetPoint("LEFT", f, "LEFT", 10, 0)
+                label:SetPoint("RIGHT", f, "RIGHT", -10, 0)
+                label:SetJustifyH("LEFT")
+                label:SetJustifyV("MIDDLE")
+                label:SetTextColor(0.15, 0.12, 0.08, 1)
+                label:SetText("")
+                f._label = label
+
+                -- Hide when the parent hides
+                parent:HookScript("OnHide", HideNpcDialogButtonFrame)
+            end
+
+            if f:GetParent() ~= parent then
+                f:SetParent(parent)
+                parent:HookScript("OnHide", HideNpcDialogButtonFrame)
+            end
+
+            -- Apply per-NPC config (text + optional button)
+            if f._label then
+                f._label:SetText("\n" .. tostring(cfg.text or ""))
+
+                -- Match NPC dialog typography (bigger + darker) at show-time (not only at creation).
+                do
+                    local ref = (parent == GossipFrame and GossipGreetingText) or (parent == QuestFrame and QuestGreetingText) or GossipGreetingText or QuestGreetingText
+                    if ref and ref.GetFontObject and f._label.SetFontObject then
+                        local fo = ref:GetFontObject()
+                        if fo then
+                            f._label:SetFontObject(fo)
+                        end
+                    end
+                    if ref and ref.GetFont and f._label.SetFont then
+                        local font, size, flags = ref:GetFont()
+                        local baseSize = 13
+                        if font then
+                            f._label:SetFont(font, baseSize, flags)
+                        end
+                    elseif f._label.GetFont and f._label.SetFont then
+                        -- Hard fallback: bump whatever font we currently have.
+                        local font, size, flags = f._label:GetFont()
+                        local baseSize = 13
+                        if font then
+                            f._label:SetFont(font, baseSize, flags)
+                        end
+                    end
+                    -- Remove any template shadow for a cleaner parchment look.
+                    if f._label.SetShadowColor then
+                        f._label:SetShadowColor(0, 0, 0, 0)
+                    end
+                    if f._label.SetShadowOffset then
+                        f._label:SetShadowOffset(0, 0)
+                    end
+                end
+            end
+            -- Overlay button: positioned to cover the original Goodbye button
+            do
+                local btnLabel = cfg.buttonLabel
+                if type(btnLabel) == "string" and btnLabel ~= "" then
+                    local function FindGoodbyeButton()
+                        -- Try common globals first
+                        local candidates = {
+                            _G.GossipFrameGreetingGoodbyeButton,
+                            _G.GossipFrameGoodbyeButton,
+                            _G.GossipGoodbyeButton,
+                            _G.QuestFrameGoodbyeButton,
+                        }
+                        for _, c in ipairs(candidates) do
+                            if c and c.IsShown and c:IsShown() then
+                                return c
+                            end
+                        end
+                        -- Scan parent children for a visible button with Goodbye text
+                        if parent and parent.GetChildren then
+                            for _, child in ipairs({ parent:GetChildren() }) do
+                                if child and child.GetObjectType and child:GetObjectType() == "Button" and child.IsShown and child:IsShown() then
+                                    if child.GetText then
+                                        local t = child:GetText()
+                                        if t and (t == GOODBYE or t == "Goodbye") then
+                                            return child
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                        return nil
+                    end
+
+                    local b = addon.NpcDialogOverlayButton
+                    if not b then
+                        b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+                        addon.NpcDialogOverlayButton = b
+                        b:SetFrameStrata("DIALOG")
+                        b:SetFrameLevel((parent.GetFrameLevel and parent:GetFrameLevel() or 0) + 50)
+                    end
+
+                    b:SetParent(parent)
+                    b:SetText(btnLabel)
+                    b:SetScript("OnClick", function()
+                        if type(cfg.onClick) == "function" then
+                            pcall(cfg.onClick, cfg, npcId, parent)
+                        end
+                        -- Close dialog as if "Goodbye" was clicked
+                        local goodbyeBtn = FindGoodbyeButton()
+                        if goodbyeBtn and goodbyeBtn.Click then
+                            goodbyeBtn:Click()
+                        end
+                        if type(CloseGossip) == "function" and parent == GossipFrame then
+                            CloseGossip()
+                        elseif type(CloseQuest) == "function" and parent == QuestFrame then
+                            CloseQuest()
+                        end
+                        if type(HideUIPanel) == "function" then
+                            HideUIPanel(parent)
+                        else
+                            parent:Hide()
+                        end
+                        HideNpcDialogButtonFrame()
+                    end)
+
+                    local anchor = FindGoodbyeButton()
+                    b:ClearAllPoints()
+                    b:SetSize(100, 20)
+                    b:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -6, 5)
+                    b:Show()
+                else
+                    if addon.NpcDialogOverlayButton and addon.NpcDialogOverlayButton.Hide then
+                        addon.NpcDialogOverlayButton:Hide()
+                    end
+                end
+            end
+
+            -- Final label position (slightly up) after overlay branch may have reset points
+            if f._label then
+                f._label:ClearAllPoints()
+                f._label:SetPoint("LEFT", f, "LEFT", 10, 4)
+                f._label:SetPoint("RIGHT", f, "RIGHT", -10, 4)
+            end
+
+            f:ClearAllPoints()
+            -- Anchor near the top of the dialog text area when possible.
+            if parent == GossipFrame and GossipGreetingText then
+                f:SetPoint("BOTTOMLEFT", GossipGreetingText, "TOPLEFT", -24, 10)
+            elseif parent == QuestFrame and QuestGreetingScrollFrame and QuestGreetingScrollFrame.GetScrollChild then
+                local child = QuestGreetingScrollFrame:GetScrollChild()
+                if child then
+                    f:SetPoint("TOPLEFT", child, "TOPLEFT", -12, -8)
+                else
+                    f:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -60)
+                end
+            else
+                f:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -60)
+            end
+            f:Show()
+        end
+
         -- Check if a GUID belongs to a pet and return the owner's GUID if it's the player's or party member's pet
         -- In Classic WoW, pet GUIDs are "Creature-" and change each summon, so we check pet units directly
         local function getPetOwnerGUID(sourceGUID)
@@ -4092,6 +4406,12 @@ do
         achEvt:RegisterEvent("BAG_UPDATE_DELAYED")
         achEvt:RegisterEvent("CHAT_MSG_TEXT_EMOTE")
         achEvt:RegisterEvent("GOSSIP_SHOW")
+        achEvt:RegisterEvent("GOSSIP_CLOSED")
+        achEvt:RegisterEvent("QUEST_GREETING")
+        achEvt:RegisterEvent("QUEST_DETAIL")
+        achEvt:RegisterEvent("QUEST_PROGRESS")
+        achEvt:RegisterEvent("QUEST_COMPLETE")
+        achEvt:RegisterEvent("QUEST_FINISHED")
         achEvt:RegisterEvent("PLAYER_LEVEL_CHANGED")
         achEvt:RegisterEvent("CHAT_MSG_LOOT")
         achEvt:RegisterEvent("PLAYER_DEAD")
@@ -4644,6 +4964,10 @@ do
                     end
                 end
             elseif event == "GOSSIP_SHOW" then
+                -- Generic "talkedTo" tracking: opening gossip counts as talking to the NPC.
+                HandleTalkedToEvent()
+                ShowNpcDialogButtonFrame()
+
                 -- Check for "MessageToKarazhan" achievement when speaking to Archmage Leryda
                 local npcName = UnitName("npc")
                 local playerLevel = UnitLevel("player")
@@ -4662,6 +4986,12 @@ do
                         end
                     end
                 end
+            elseif event == "QUEST_GREETING" or event == "QUEST_DETAIL" or event == "QUEST_PROGRESS" or event == "QUEST_COMPLETE" then
+                -- NPC quest dialogs also count as talking to the NPC (covers non-gossip quest givers).
+                HandleTalkedToEvent()
+                ShowNpcDialogButtonFrame()
+            elseif event == "GOSSIP_CLOSED" or event == "QUEST_FINISHED" then
+                HideNpcDialogButtonFrame()
             elseif event == "PLAYER_LEVEL_CHANGED" then
                 -- arg1 is previous level, arg2 is new level
                 local prevArg, newArg = ...

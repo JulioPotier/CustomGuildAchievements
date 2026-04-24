@@ -774,7 +774,7 @@ local function HandleSlashCommand(msg)
                 print("|cff00ff00[Hardcore Achievements]|r Admin secret key is set (length: " .. #key .. ")")
             else
                 print("|cffff0000[Hardcore Achievements]|r Admin secret key is NOT set")
-                print("|CFFFFD100[Hardcore Achievements]|r Use: /hca adminkey set <your-secret-key-here>")
+                print("|CFFFFD100[Hardcore Achievements]|r Use: /cga adminkey set <your-secret-key-here>")
                 print("|CFFFFD100[Hardcore Achievements]|r Key must be at least 16 characters long")
             end
         elseif args[2] == "clear" then
@@ -787,9 +787,9 @@ local function HandleSlashCommand(msg)
             end
         else
             print("|cff00ff00[Hardcore Achievements]|r Admin key commands:")
-            print("  |CFFFFD100/hca adminkey set <key>|r - Set admin secret key (min 16 chars)")
-            print("  |CFFFFD100/hca adminkey check|r - Check if admin key is set")
-            print("  |CFFFFD100/hca adminkey clear|r - Clear admin secret key")
+            print("  |CFFFFD100/cga adminkey set <key>|r - Set admin secret key (min 16 chars)")
+            print("  |CFFFFD100/cga adminkey check|r - Check if admin key is set")
+            print("  |CFFFFD100/cga adminkey clear|r - Clear admin secret key")
         end
     elseif command == "tracker" then
         -- Tracker commands
@@ -823,13 +823,13 @@ local function HandleSlashCommand(msg)
             end
         else
             print("|cff008066[Hardcore Achievements]|r Tracker commands:")
-            print("  |CFFFFD100/hca tracker show|r - Show the achievement tracker")
-            print("  |CFFFFD100/hca tracker hide|r - Hide the achievement tracker")
-            print("  |CFFFFD100/hca tracker toggle|r - Toggle the achievement tracker")
+            print("  |CFFFFD100/cga tracker show|r - Show the achievement tracker")
+            print("  |CFFFFD100/cga tracker hide|r - Hide the achievement tracker")
+            print("  |CFFFFD100/cga tracker toggle|r - Toggle the achievement tracker")
         end
     elseif command == "log" then
         local sub = args[2] and string.lower(args[2]) or "show"
-        -- Event log /hca log clear disabled for now (retain history for debugging).
+        -- Event log /cga log clear disabled for now (retain history for debugging).
         -- if sub == "clear" then
         --     if addon.EventLogClear then
         --         addon.EventLogClear()
@@ -843,7 +843,7 @@ local function HandleSlashCommand(msg)
                 print("|cffff0000[Hardcore Achievements]|r Event log is not available.")
             end
         else
-            print("|cff008066[Hardcore Achievements]|r Event log: |CFFFFD100/hca log|r or |CFFFFD100/hca log show|r")
+            print("|cff008066[Hardcore Achievements]|r Event log: |CFFFFD100/cga log|r or |CFFFFD100/cga log show|r")
         end
     elseif command == "debug" then
         -- Debug toggle command
@@ -867,18 +867,18 @@ local function HandleSlashCommand(msg)
         end
     else
         print("|cff008066[Hardcore Achievements]|r Available commands:")
-        print("  |CFFFFD100/hca show|r - Enable and show the custom achievement tab")
-        print("  |CFFFFD100/hca reset tab|r - Reset the tab position to default")
-        print("  |CFFFFD100/hca tracker|r - Manage the achievement tracker")
-        print("  |CFFFFD100/hca debug|r - Toggle debug mode (on/off)")
-        print("  |CFFFFD100/hca log|r - Open troubleshooting event log")
-        --print("  |CFFFFD100/hca log clear|r - Clear the event log")
-        --print("  |CFFFFD100/hca adminkey|r - Manage admin secret key for secure commands")
+        print("  |CFFFFD100/cga show|r - Enable and show the custom achievement tab")
+        print("  |CFFFFD100/cga reset tab|r - Reset the tab position to default")
+        print("  |CFFFFD100/cga tracker|r - Manage the achievement tracker")
+        print("  |CFFFFD100/cga debug|r - Toggle debug mode (on/off)")
+        print("  |CFFFFD100/cga log|r - Open troubleshooting event log")
+        --print("  |CFFFFD100/cga log clear|r - Clear the event log")
+        --print("  |CFFFFD100/cga adminkey|r - Manage admin secret key for secure commands")
     end
 end
 
 -- Register slash command
-SLASH_HARDCOREAchievements1 = "/hca"
+SLASH_HARDCOREAchievements1 = "/cga"
 SLASH_HARDCOREAchievements2 = "/hardcoreachievements"
 SlashCmdList["HARDCOREAchievements"] = HandleSlashCommand
 
@@ -930,7 +930,7 @@ end
 local function CreateAdminPayload(targetCharacter, achievementId, overridePoints, overrideLevel, forceUpdate)
     local secretKey = GetAdminSecretKey()
     if not secretKey or secretKey == "" then
-        error("Admin secret key not set! Use /hca adminkey set <key> first")
+        error("Admin secret key not set! Use /cga adminkey set <key> first")
     end
     
     local payload = {

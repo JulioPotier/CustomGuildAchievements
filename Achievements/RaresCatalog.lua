@@ -187,6 +187,7 @@ for _, def in ipairs(RaresAchievements) do
           race            = def.race,
           class           = def.class,
           allowKillsBeforeQuest = def.allowKillsBeforeQuest,
+          zoneAccurate    = def.zoneAccurate,
         }
       end
     end

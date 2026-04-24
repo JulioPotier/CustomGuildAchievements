@@ -161,7 +161,7 @@ GuildAchievements = {
   {
     achId = "GUILD-WELCOME",
     title = "A " .. playerClass .. " for " .. guildName .. "!",
-    tooltip = "As a fellow " .. playerClass .. ", you are now part of " .. guildName .. ". We wish you the best, " .. playerName .. "! Stay safe, help others, and have fun.",
+    tooltip = "Welcome to Adventure Co " .. playerName .. "!\n\nWe're so glad to have you with us!\nOur Guild is about friendship, support and surviving hardcore together - no one should walk the road alone.\n\nGlad to have you on board, and may your journey be long and full of fun! \n\n/Rentjärn - " .. guildName .. " Guild Master",
     icon = GetClassIcon(),
     -- Core only auto-completes via customIsCompleted. Must use addon.IsInTargetGuild (set in
     -- CustomGuildAchievements.lua); IsInTargetGuild is not a global in this file — calling it was nil and pcall() failed.
@@ -214,6 +214,29 @@ GuildAchievements = {
       return need > 0 and CountSatisfiedRequiredTargets(met, TARGETS_MEET_KINGS_LIST) >= need
     end,
   },
+  -- // TALK TO KATRANA (TEST)
+  {
+    achId = "GUILD-TALK-KATRANA-1749",
+    title = "An audience with Lady Prestor",
+    tooltip = "Speak with Lady Katrana Prestor in Stormwind.",
+    icon = 135981,
+    points = 5,
+    level = 60,
+    requiredTalkTo = {
+      [1749] = 1, -- Lady Katrana Prestor
+    },
+  },
+  {
+    achId = "Murloc in Duskwood",
+    title = "Murloc in Duskwood",
+    level = nil,
+    tooltip = "Find and kill a " .. classColor .. "Murloc|r in",
+    icon = 134169,
+    targetNpcId = 46,
+    zone = "Duskwood",
+    -- UiMapID (locale-neutral); kill counts only in this zone tree. Verify in-game: /run print(C_Map.GetBestMapForUnit("player"))
+    zoneAccurate = 1431,
+  },
 }
 
 -- Defer registration until PLAYER_LOGIN (UnitClass/UnitFactionGroup valid, and core is ready).
@@ -222,9 +245,40 @@ if addon then
   local queue = addon.RegistrationQueue
   local RegisterAchievementDef = addon.RegisterAchievementDef
 
+  local function GetKillTracker(def)
+    if def.customKill then
+      return def.customKill
+    end
+    if (def.targetNpcId or def.requiredKills) and addon.GetAchievementFunction then
+      return addon.GetAchievementFunction(def.achId, "Kill")
+    end
+    return nil
+  end
+
+  local function GetQuestTracker(def)
+    if def.requiredQuestId and addon.GetAchievementFunction then
+      return addon.GetAchievementFunction(def.achId, "Quest")
+    end
+    return nil
+  end
+
   for _, def in ipairs(GuildAchievements) do
     def.isGuild = true
     table_insert(queue, function()
+      if not def.customKill and (def.targetNpcId or def.requiredKills or def.requiredQuestId) and addon.registerQuestAchievement then
+        addon.registerQuestAchievement{
+          achId = def.achId,
+          requiredQuestId = def.requiredQuestId,
+          targetNpcId = def.targetNpcId,
+          requiredKills = def.requiredKills,
+          maxLevel = def.level,
+          faction = def.faction,
+          race = def.race,
+          class = def.class,
+          allowKillsBeforeQuest = def.allowKillsBeforeQuest,
+          zoneAccurate = def.zoneAccurate,
+        }
+      end
       if RegisterAchievementDef then
         RegisterAchievementDef(def)
       end
@@ -242,8 +296,8 @@ if addon then
           def.icon,
           def.level,
           def.points or 0,
-          nil,
-          nil,
+          GetKillTracker(def),
+          GetQuestTracker(def),
           def.staticPoints,
           def.zone,
           def

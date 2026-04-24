@@ -378,6 +378,7 @@ if addon then
             race            = def.race,
             class           = def.class,
             allowKillsBeforeQuest = def.allowKillsBeforeQuest,
+            zoneAccurate    = def.zoneAccurate,
           }
         end
       end

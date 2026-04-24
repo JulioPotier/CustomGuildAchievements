@@ -152,7 +152,7 @@ local function CreateInitialOptionsFrame()
     titleText:SetPoint("CENTER", titleBar, "CENTER", 0, 0)
     titleText:SetFont(POINTS_FONT_PATH, 18)
     titleText:SetTextColor(GetPlayerClassColor())
-    titleText:SetText("Hardcore Achievements")
+    titleText:SetText("Custom Guild Achievements")
 
     -- Divider below title (Dashboard-style)
     local divider = CreateFrame("Frame", nil, frame)

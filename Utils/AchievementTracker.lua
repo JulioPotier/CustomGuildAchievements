@@ -2044,6 +2044,34 @@ local function TrackAchievement(self, achievementId, title)
         return
     end
 
+    -- Don't allow tracking completed achievements (they should auto-untrack on completion).
+    do
+        local achIdStr = tostring(achievementId)
+        local isCompleted = false
+        local row = (addon and addon.GetAchievementRow and addon.GetAchievementRow(achievementId)) or nil
+        if row and row.completed then
+            isCompleted = true
+        else
+            local getCharDB = addon and addon.GetCharDB
+            if type(getCharDB) == "function" then
+                local _, cdb = getCharDB()
+                if cdb and cdb.achievements and cdb.achievements[achIdStr] and cdb.achievements[achIdStr].completed then
+                    isCompleted = true
+                end
+            end
+        end
+        if isCompleted then
+            -- If it was tracked before, clear it now.
+            if trackedAchievements[achIdStr] ~= nil or trackedAchievements[achievementId] ~= nil then
+                trackedAchievements[achIdStr] = nil
+                trackedAchievements[achievementId] = nil
+                SaveTrackedAchievements()
+                Update(self)
+            end
+            return
+        end
+    end
+
     -- Check limit (WoW allows max 10 tracked achievements)
     local count = 0
     for _ in pairs(trackedAchievements) do
@@ -2148,6 +2176,14 @@ local function HookAchievementRefresh()
             if row then
                 -- Get achievement ID from row
                 local achId = row.achId or row.id
+
+                -- Auto-untrack completed achievements and persist removal.
+                if achId and AchievementTracker and AchievementTracker.UntrackAchievement then
+                    local achKey = tostring(achId)
+                    if trackedAchievements[achKey] ~= nil then
+                        AchievementTracker:UntrackAchievement(achKey)
+                    end
+                end
                 
                 -- Update tracker when any achievement is completed
                 if achId and AchievementTracker and AchievementTracker.Update then
@@ -2181,6 +2217,7 @@ local function HookAchievementRefresh()
             -- Check if this achievement is tracked and if the progress change affects display
             local progressAffectsDisplay = key == "counts" or key == "itemOwned" or key == "killed" or key == "quest" or key == "soloKill" or key == "soloQuest" or key == "eligibleCounts" or key == "ineligibleKill"
                 or key == "metTargets"
+                or key == "talkedTo"
             if achId and progressAffectsDisplay then
                 local achIdStr = tostring(achId)
                 local achIdNum = tonumber(achIdStr)
