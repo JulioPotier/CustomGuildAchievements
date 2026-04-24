@@ -50,30 +50,26 @@ end
 
 -- Get checkbox states from database with proper defaults
 local function GetCheckboxStates()
-    local checkboxStates = { true, true, true, true, true, true, false, false, false, false, false, false, false, false }
+    -- Standalone simplified filter: Guild + Rares only
+    local checkboxStates = { true, true }
     local getCharDB = addon and addon.GetCharDB
     if type(getCharDB) == "function" then
         local _, cdb = getCharDB()
         if cdb and cdb.settings and cdb.settings.filterCheckboxes then
             local states = cdb.settings.filterCheckboxes
             if type(states) == "table" then
-                checkboxStates = {
-                    states[1] ~= false,  -- Quest (default true)
-                    states[2] ~= false,  -- Dungeon (default true)
-                    states[3] ~= false,  -- Heroic Dungeon (default true)
-                    states[4] ~= false,  -- Raid (default true)
-                    states[5] ~= false,  -- Professions (default true)
-                    states[6] ~= false,  -- Meta (default true)
-                    states[7] == true,  -- Reputations
-                    states[8] == true,  -- Exploration
-                    states[9] == true,  -- Dungeon Sets
-                    states[10] == true,  -- Solo
-                    states[11] == true,  -- Duo
-                    states[12] == true,  -- Trio
-                    states[13] == true,  -- Ridiculous
-                    states[14] == true,  -- Secret
-                    states[15] == true,  -- Rares
-                }
+                -- Migration: if old 15-state schema is present, map old Rares into the new schema.
+                if states[15] ~= nil then
+                    checkboxStates = {
+                        true,             -- Guild default ON
+                        states[15] == true, -- Rares
+                    }
+                else
+                    checkboxStates = {
+                        states[1] ~= false, -- Guild
+                        states[2] ~= false, -- Rares
+                    }
+                end
             end
         end
     end
@@ -88,21 +84,8 @@ local function SaveCheckboxStates(checkboxStates)
         if cdb then
             cdb.settings = cdb.settings or {}
             cdb.settings.filterCheckboxes = {
-                checkboxStates[1] == true,  -- Quest
-                checkboxStates[2] == true,  -- Dungeon
-                checkboxStates[3] == true,  -- Heroic Dungeon
-                checkboxStates[4] == true,  -- Raid
-                checkboxStates[5] == true,  -- Professions
-                checkboxStates[6] == true,  -- Meta
-                checkboxStates[7] == true,  -- Reputations
-                checkboxStates[8] == true,  -- Exploration
-                checkboxStates[9] == true,  -- Dungeon Sets
-                checkboxStates[10] == true,  -- Solo
-                checkboxStates[11] == true,  -- Duo
-                checkboxStates[12] == true,  -- Trio
-                checkboxStates[13] == true,  -- Ridiculous
-                checkboxStates[14] == true,  -- Secret
-                checkboxStates[15] == true,  -- Rares
+                checkboxStates[1] == true,  -- Guild
+                checkboxStates[2] == true,  -- Rares
             }
         end
     end
@@ -115,19 +98,12 @@ local function ShouldShowByCheckboxFilter(def, isCompleted, checkboxIndex, varia
     
     -- For variations, check based on variation type
     if variationType then
-        if variationType == "Trio" then
-            return checkboxStates[12]
-        elseif variationType == "Duo" then
-            return checkboxStates[11]
-        elseif variationType == "Solo" then
-            return checkboxStates[10]
-        end
-        return false
+        return true
     end
     
     -- For other types, check the specified checkbox index
     if checkboxIndex then
-        return checkboxStates[checkboxIndex]
+        return checkboxStates[checkboxIndex] ~= false
     end
     
     return true -- Default to showing if no checkbox specified
@@ -486,11 +462,7 @@ local function CreateAndInitializeDropdown(self, parent, positionConfig, callbac
     
     local dropdown = CreateDropdown(self, parent, anchorPoint, anchorTo, xOffset, yOffset, width)
     
-    local checkboxLabels = { 
-        "Quests", "Dungeons", "Heroic Dungeons", "Raids", "Professions", "Meta", 
-        "Reputations", "Exploration", "Dungeon Sets", "Solo Dungeons", "Duo Dungeons", 
-        "Trio Dungeons", "Ridiculous", "Secret", "Rares" 
-    }
+    local checkboxLabels = {}
     
     InitializeDropdown(self, dropdown, {
         checkboxLabels = checkboxLabels,

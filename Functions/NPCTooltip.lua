@@ -64,6 +64,24 @@ local function GetAchievementsForNPC(npcId)
                         if found then break end
                     end
                 end
+
+                if not found and achDef.requiredTarget then
+                    for tgtNpcId, need in pairs(achDef.requiredTarget) do
+                        if type(need) == "table" then
+                            for _, id in pairs(need) do
+                                if tonumber(id) == npcId then
+                                    found = true
+                                    break
+                                end
+                            end
+                        else
+                            if tonumber(tgtNpcId) == npcId then
+                                found = true
+                            end
+                        end
+                        if found then break end
+                    end
+                end
                 
                 if found then
                     table_insert(achievements, {

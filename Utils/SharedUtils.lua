@@ -232,6 +232,9 @@ local function RegisterAchievementDef(def, overrides)
         -- Quest-specific fields
         targetNpcId = def.targetNpcId,
         requiredKills = def.requiredKills,
+        requiredTarget = def.requiredTarget,
+        -- Optional display order for requiredTarget lists (tracker/tooltip); never used for completion logic.
+        targetOrder = def.targetOrder,
         requiredQuestId = def.requiredQuestId,
         -- Dungeon/Raid-specific fields
         mapID = def.requiredMapId or def.mapID,
@@ -281,6 +284,21 @@ end
 ---------------------------------------
 -- Export: internal (addon)
 ---------------------------------------
+-- Minimal NPC name lookup when DungeonCommon has not registered yet (e.g. guild-only TOC).
+-- Overwritten by DungeonCommon.registerDungeonAchievement when dungeon defs load.
+if addon and type(addon.GetBossName) ~= "function" then
+    function addon.GetBossName(npcId)
+        if not npcId then return "Mob #?" end
+        local id = tonumber(npcId) or npcId
+        local t = addon._DungeonBossNameLookup
+        if t then
+            local n = t[id] or t[tostring(id)]
+            if n then return n end
+        end
+        return ("Mob #%s"):format(tostring(id))
+    end
+end
+
 if addon then
     addon.GetSetting = GetSetting
     addon.GetClassColor = GetClassColor

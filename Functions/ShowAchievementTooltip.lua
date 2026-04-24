@@ -9,6 +9,7 @@ local ipairs = ipairs
 local tonumber = tonumber
 local type = type
 local table_insert = table.insert
+local table_sort = table.sort
 local table_concat = table.concat
 
 ---------------------------------------
@@ -30,6 +31,8 @@ local function ExtractAchievementData(data)
         def = nil,
         achievementCompleted = false,
         requiredKills = nil,
+        requiredTarget = nil,
+        targetOrder = nil,
         requiredItems = nil,
         itemOrder = nil,
         requiredAchievements = nil,
@@ -89,6 +92,8 @@ local function ExtractAchievementData(data)
     end
     
     result.requiredKills = getValue("requiredKills")
+    result.requiredTarget = getValue("requiredTarget")
+    result.targetOrder = getValue("targetOrder")
     result.requiredItems = getValue("requiredItems")
     result.itemOrder = getValue("itemOrder")
     result.requiredAchievements = getValue("requiredAchievements")
@@ -175,6 +180,86 @@ local function ShowBossRequirements(achId, requiredKills, bossOrder, achievement
     else
         for npcId, need in pairs(requiredKills) do
             processBossEntry(npcId, need)
+        end
+    end
+end
+
+-- Show required NPC targets (metTargets / legacy metKings), white = done, gray = not yet.
+-- targetOrder is optional and affects list order in the tooltip only, not completion rules.
+local function ShowTargetRequirements(achId, requiredTarget, targetOrder, achievementCompleted, def, achDef)
+    if not requiredTarget or next(requiredTarget) == nil then
+        return
+    end
+    GameTooltip:AddLine("\nRequired Targets:", 0, 1, 0)
+    local progress = addon and addon.GetProgress and addon.GetProgress(achId)
+    local met = {}
+    if progress and type(progress.metTargets) == "table" then
+        for k, v in pairs(progress.metTargets) do
+            if v then
+                met[k] = true
+                local kn = tonumber(k)
+                if kn then met[kn] = true end
+            end
+        end
+    end
+    if progress and type(progress.metKings) == "table" then
+        for k, v in pairs(progress.metKings) do
+            if v then
+                met[k] = true
+                local kn = tonumber(k)
+                if kn then met[kn] = true end
+            end
+        end
+    end
+    local isRaid = (def and def.isRaid) or (achDef and achDef.isRaid)
+    local getBossNameFn = isRaid and (addon and addon.GetRaidBossName) or (addon and addon.GetBossName)
+    local function processTargetEntry(npcId, need)
+        local done = achievementCompleted
+        local displayName = ""
+        if type(need) == "table" then
+            local names = {}
+            for _, id in pairs(need) do
+                local idn = tonumber(id) or id
+                if not done and (met[idn] or met[id] or met[tostring(idn)]) then
+                    done = true
+                end
+                table_insert(names, (getBossNameFn and getBossNameFn(idn)) or ("Mob #" .. tostring(idn)))
+            end
+            if type(npcId) == "string" then
+                displayName = npcId
+            else
+                displayName = table_concat(names, " / ")
+            end
+        else
+            local idNum = tonumber(npcId) or npcId
+            displayName = (getBossNameFn and getBossNameFn(idNum)) or ("Mob #" .. tostring(idNum))
+            if not done then
+                done = met[idNum] or met[tostring(idNum)] or met[npcId]
+            end
+        end
+        if done then
+            GameTooltip:AddLine(displayName, 1, 1, 1)
+        else
+            GameTooltip:AddLine(displayName, 0.5, 0.5, 0.5)
+        end
+    end
+    if targetOrder and #targetOrder > 0 then
+        for _, npcId in ipairs(targetOrder) do
+            local need = requiredTarget[npcId]
+            if need then
+                processTargetEntry(npcId, need)
+            end
+        end
+    else
+        local keys = {}
+        for npcId, _ in pairs(requiredTarget) do
+            table_insert(keys, npcId)
+        end
+        table_sort(keys, function(a, b)
+            return (tonumber(a) or 0) < (tonumber(b) or 0)
+        end)
+        for _, npcId in ipairs(keys) do
+            processTargetEntry(npcId, requiredTarget[npcId])
         end
     end
 end
@@ -315,6 +400,8 @@ local function ShowAchievementTooltip(frame, data)
     local def = extracted.def
     local achievementCompleted = extracted.achievementCompleted
     local requiredKills = extracted.requiredKills
+    local requiredTarget = extracted.requiredTarget
+    local targetOrder = extracted.targetOrder
     local requiredItems = extracted.requiredItems
     local itemOrder = extracted.itemOrder
     local requiredAchievements = extracted.requiredAchievements
@@ -413,8 +500,9 @@ local function ShowAchievementTooltip(frame, data)
         local hasQuestRequirement = def.requiredQuestId ~= nil
         local hasKillRequirement = def.requiredKills ~= nil
         local hasTargetNpc = def.targetNpcId ~= nil
+        local hasRequiredTarget = def.requiredTarget ~= nil
         local hasCustomTriggers = def.customKill or def.customSpell or def.customEmote or def.customEvent
-        if def.customIsCompleted and not hasQuestRequirement and not hasKillRequirement and not hasTargetNpc and not hasCustomTriggers then
+        if def.customIsCompleted and not hasQuestRequirement and not hasKillRequirement and not hasTargetNpc and not hasRequiredTarget and not hasCustomTriggers then
             requiresItemOnly = true
         end
     end
@@ -450,6 +538,12 @@ local function ShowAchievementTooltip(frame, data)
             end
         end
         -- Check for requiredItems in AchievementDefs (for dungeon sets)
+        if achDef.requiredTarget then
+            requiredTarget = achDef.requiredTarget
+        end
+        if achDef.targetOrder then
+            targetOrder = achDef.targetOrder
+        end
         if achDef.requiredItems then
             requiredItems = achDef.requiredItems
         end
@@ -470,6 +564,12 @@ local function ShowAchievementTooltip(frame, data)
     
     -- Also check def for requirements
     if def then
+        if def.requiredTarget then
+            requiredTarget = def.requiredTarget
+        end
+        if def.targetOrder then
+            targetOrder = def.targetOrder
+        end
         if def.requiredItems then
             requiredItems = def.requiredItems
         end
@@ -490,6 +590,7 @@ local function ShowAchievementTooltip(frame, data)
     -- Show boss requirements if available
     local bossOrder = achDef and achDef.bossOrder
     ShowBossRequirements(achId, requiredKills, bossOrder, achievementCompleted, def, achDef)
+    ShowTargetRequirements(achId, requiredTarget, targetOrder, achievementCompleted, def, achDef)
     
     -- Show item requirements if available
     ShowItemRequirements(requiredItems, itemOrder, achievementCompleted)

@@ -34,28 +34,12 @@ CustomGuildAchievements.lua
 Utils\GuildFirst.lua
 
 Achievements\Common.lua
-Achievements\DungeonCommon.lua [AllowLoadGameType vanilla]
-Achievements\DungeonSetCommon.lua [AllowLoadGameType vanilla]
-Achievements\ReputationCommon.lua [AllowLoadGameType vanilla]
-Achievements\RaidCommon.lua [AllowLoadGameType vanilla]
 Achievements\MetaCommon.lua
-Achievements\ProfessionCatalog.lua [AllowLoadGameType vanilla]
-Achievements\Catalog.lua [AllowLoadGameType vanilla]
-Achievements\SecretCatalog.lua [AllowLoadGameType vanilla]
-#Achievements\GuildFirstCatalog.lua [AllowLoadGameType vanilla]
-Achievements\RidiculousCatalog.lua [AllowLoadGameType vanilla]
-Achievements\RaresCatalog.lua [AllowLoadGameType vanilla]
-Achievements\DungeonCatalog.lua [AllowLoadGameType vanilla]
-Achievements\DungeonSetCatalog.lua [AllowLoadGameType vanilla]
-Achievements\ReputationCatalog.lua [AllowLoadGameType vanilla]
-Achievements\RaidCatalog.lua [AllowLoadGameType vanilla]
-Achievements\MetaCatalog.lua [AllowLoadGameType vanilla]
-Achievements\FourCandles.lua [AllowLoadGameType vanilla]
-Achievements\ExplorationCatalog.lua [AllowLoadGameType vanilla]
+Achievements\DungeonCommon.lua [AllowLoadGameType vanilla]
+Achievements\GuildCatalog.lua [AllowLoadGameType vanilla]
 
 Utils\Dashboard.lua
 Utils\CommandHandler.lua
 Utils\AchievementLinks.lua
 Utils\OptionsPanel.lua
 Utils\InitialOptionsFrame.lua
-Utils\CharacterInspection.lua

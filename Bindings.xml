@@ -1,5 +1,5 @@
 <Bindings>
-	<Binding name="HCA_TOGGLE" category = "Hardcore Achievements">
+	<Binding name="CGA_TOGGLE" category="Custom Guild Achievements">
 		ShowHardcoreAchievementWindow()
 	</Binding>
 </Bindings>

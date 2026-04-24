@@ -307,21 +307,7 @@ local function ShouldShowBySelectedTab(def)
   local key = (DashboardFrame and DashboardFrame.SelectedTabKey) or "all"
 
   if key == "all" then return true end
-  if key == "quest" then return def.isQuest == true end
-  if key == "dungeon" then return def.isDungeon == true and def.isVariation ~= true end
-  if key == "heroic_dungeon" then return def.isHeroicDungeon == true end
-  if key == "raid" then return def.isRaid == true end
-  if key == "profession" then return def.isProfession == true end
-  if key == "meta" then return def.isMeta == true end
-  if key == "reputation" then return def.isReputation == true end
-  if key == "exploration" then return def.isExploration == true end
-  if key == "gear_sets" then return def.isDungeonSet == true end
-  if key == "dungeon_solo" then return def.isVariation == true and def.variationType == "Solo" end
-  if key == "dungeon_duo" then return def.isVariation == true and def.variationType == "Duo" end
-  if key == "dungeon_trio" then return def.isVariation == true and def.variationType == "Trio" end
-  if key == "ridiculous" then return def.isRidiculous == true end
-  if key == "secret" then return def.isSecret == true end
-  if key == "rares" then return def.isRares == true end
+  if key == "guild" then return def.isGuild == true end
   if key == "log" then return false end
 
   return true
@@ -331,21 +317,7 @@ local function DefMatchesTabKey(def, key)
   if not def then return false end
   key = key or "all"
   if key == "all" then return true end
-  if key == "quest" then return def.isQuest == true end
-  if key == "dungeon" then return def.isDungeon == true and def.isVariation ~= true end
-  if key == "heroic_dungeon" then return def.isHeroicDungeon == true end
-  if key == "raid" then return def.isRaid == true end
-  if key == "profession" then return def.isProfession == true end
-  if key == "meta" then return def.isMeta == true end
-  if key == "reputation" then return def.isReputation == true end
-  if key == "exploration" then return def.isExploration == true end
-  if key == "gear_sets" then return def.isDungeonSet == true end
-  if key == "dungeon_solo" then return def.isVariation == true and def.variationType == "Solo" end
-  if key == "dungeon_duo" then return def.isVariation == true and def.variationType == "Duo" end
-  if key == "dungeon_trio" then return def.isVariation == true and def.variationType == "Trio" end
-  if key == "ridiculous" then return def.isRidiculous == true end
-  if key == "secret" then return def.isSecret == true end
-  if key == "rares" then return def.isRares == true end
+  if key == "guild" then return def.isGuild == true end
   if key == "log" then return false end
   return false
 end
@@ -765,17 +737,21 @@ local function ApplyOutleveledStyleDashboard(row)
     
 end
 
--- Format timestamp (same as character panel)
+-- Format timestamp (same as character panel — uses addon.FormatTimestamp)
 local function FormatTimestampDashboard(timestamp)
+    local fn = addon and addon.FormatTimestamp
+    if type(fn) == "function" then
+        return fn(timestamp) or ""
+    end
     if not timestamp then return "" end
-    
     local dateInfo = date("*t", timestamp)
+    if not dateInfo then return "" end
     local locale = GetLocale()
-    
+    local timePart = string_format(" %02d:%02d:%02d", dateInfo.hour, dateInfo.min, dateInfo.sec)
     if locale == "enUS" then
-        return string_format("%02d/%02d/%02d", dateInfo.month, dateInfo.day, dateInfo.year % 100)
+        return string_format("%02d/%02d/%02d", dateInfo.month, dateInfo.day, dateInfo.year % 100) .. timePart
     else
-        return string_format("%02d/%02d/%02d", dateInfo.day, dateInfo.month, dateInfo.year % 100)
+        return string_format("%02d/%02d/%02d", dateInfo.day, dateInfo.month, dateInfo.year % 100) .. timePart
     end
 end
 
@@ -836,6 +812,8 @@ local function ReadRowData(src)
       completed = not not src.completed,
     maxLevel = tonumber(src.maxLevel) or nil,
       requiredKills = src.requiredKills,
+      requiredTarget = src.requiredTarget,
+      targetOrder = src.targetOrder,
     outleveled = IsRowOutleveled(src),
     hiddenUntilComplete = not not src.hiddenUntilComplete,
     -- Profession milestones can "overwrite" previous tiers via addon.Profession
@@ -1452,6 +1430,8 @@ local function CreateDashboardModernRow(parent, srow)
     row._zone = zone
     row.sourceRow = srow
     row.requiredKills = srow.requiredKills
+    row.requiredTarget = srow.requiredTarget
+    row.targetOrder = srow.targetOrder
     
     -- Store data
     row.achId = achId
@@ -1505,6 +1485,8 @@ local function UpdateDashboardModernRow(row, srow)
     row._def = def
     row.requiredAchievements = srow.requiredAchievements
     row.requiredKills = srow.requiredKills
+    row.requiredTarget = srow.requiredTarget
+    row.targetOrder = srow.targetOrder
     row.tooltip = tooltip or srow.tooltip or srow._tooltip or ""
     row._tooltip = row.tooltip
     row.zone = srow.zone or srow._zone
@@ -1554,18 +1536,12 @@ local function UpdateDashboardModernRow(row, srow)
             else
                 row.TS:SetText(FormatTimestampDashboard(time()))
             end
-        elseif IsRowOutleveled(row) then
-            local failedAt = nil
-            if addon and addon.GetFailureTimestamp then
-                failedAt = addon.GetFailureTimestamp(tostring(achId or ""))
-            end
-            if not failedAt and addon and addon.EnsureFailureTimestamp then
-                failedAt = addon.EnsureFailureTimestamp(tostring(achId or ""))
-            end
-            failedAt = failedAt or time()
-            row.TS:SetText(FormatTimestampDashboard(failedAt))
         else
+            -- Available or failed: no date/time on the row (still record failedAt for failed rows)
             row.TS:SetText("")
+            if IsRowOutleveled(row) and achId and addon and addon.EnsureFailureTimestamp then
+                addon.EnsureFailureTimestamp(tostring(achId))
+            end
         end
     end
 
@@ -1826,7 +1802,6 @@ local function UpdateDashboardProgressOverview(srcRows)
         local isExploration = row._def and row._def.isExploration
         local isRidiculous = row._def and row._def.isRidiculous
         local isSecret = row._def and row._def.isSecret
-        local isRares = row._def and row._def.isRares
         local excludeFromCount = row._def and row._def.excludeFromCount
 
         local shouldCount =
@@ -2011,22 +1986,7 @@ local function UpdateDashboardProgressOverview(srcRows)
 
   SetBar("all", "Achievements Earned")
   SetBar("quest", "Quests")
-  SetBar("dungeon", "Dungeon")
-  if isTBC then
-    SetBar("heroic_dungeon", "Heroic Dungeon")
-  end
-  SetBar("raid", "Raid")
-  SetBar("profession", "Profession")
-  SetBar("meta", "Meta")
-  SetBar("reputation", "Reputation")
-  SetBar("exploration", "Exploration")
-  SetBar("gear_sets", "Gear Sets")
-  SetBar("dungeon_solo", "Dungeon Solo")
-  SetBar("dungeon_duo", "Dungeon Duo")
-  SetBar("dungeon_trio", "Dungeon Trio")
-  SetBar("ridiculous", "Ridiculous")
-  SetBar("secret", "Secret")
-  SetBar("rares", "Rares")
+  -- Standalone simplified build: only Guild achievements are loaded.
 
   LayoutColumn(leftKeys, "left")
   LayoutColumn(rightKeys, "right")
@@ -2864,28 +2824,9 @@ local function BuildDashboardFrame()
 
     local tabDefs = {
       { key = "all", label = "All" },
-      { key = "quest", label = "Quests" },
-      { key = "dungeon", label = "Dungeon" },
-    }
-    if isTBC then
-      table_insert(tabDefs, { key = "heroic_dungeon", label = "Heroic Dungeon" })
-    end
-    local more = {
-      { key = "raid", label = "Raid" },
-      { key = "profession", label = "Profession" },
-      { key = "meta", label = "Meta" },
-      { key = "reputation", label = "Reputation" },
-      { key = "exploration", label = "Exploration" },
-      { key = "gear_sets", label = "Gear Sets" },
-      { key = "dungeon_solo", label = "Dungeon Solo" },
-      { key = "dungeon_duo", label = "Dungeon Duo" },
-      { key = "dungeon_trio", label = "Dungeon Trio" },
-      { key = "ridiculous", label = "Ridiculous" },
-      { key = "secret", label = "Secret" },
-      { key = "rares", label = "Rares" },
+      { key = "guild", label = "Guild" },
       { key = "log", label = "Logs" },
     }
-    for _, t in ipairs(more) do table_insert(tabDefs, t) end
 
     DashboardFrame.TabButtons = DashboardFrame.TabButtons or {}
     DashboardFrame.TabButtonsByKey = DashboardFrame.TabButtonsByKey or {}

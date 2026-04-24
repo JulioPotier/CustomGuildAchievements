@@ -795,6 +795,8 @@ local function GetAchievementDescription(achievementId)
     local baseTooltip = nil
     local requiredKills = nil
     local bossOrder = nil
+    local requiredTarget = nil
+    local targetOrder = nil
     local requiredItems = nil
     local itemOrder = nil
     local requiredAchievements = nil
@@ -854,6 +856,12 @@ local function GetAchievementDescription(achievementId)
         if achDef.bossOrder then
             bossOrder = achDef.bossOrder
         end
+        if achDef.requiredTarget then
+            requiredTarget = achDef.requiredTarget
+        end
+        if achDef.targetOrder then
+            targetOrder = achDef.targetOrder
+        end
         if achDef.requiredItems then
             requiredItems = achDef.requiredItems
         end
@@ -886,6 +894,8 @@ local function GetAchievementDescription(achievementId)
                 baseTooltip = row.tooltip or row._tooltip
             end
             if not requiredKills and row.requiredKills then requiredKills = row.requiredKills end
+            if not requiredTarget and row.requiredTarget then requiredTarget = row.requiredTarget end
+            if not targetOrder and row.targetOrder then targetOrder = row.targetOrder end
             if not requiredItems and row.requiredItems then requiredItems = row.requiredItems end
             if not itemOrder and row.itemOrder then itemOrder = row.itemOrder end
             if not requiredAchievements and row.requiredAchievements then requiredAchievements = row.requiredAchievements end
@@ -893,6 +903,8 @@ local function GetAchievementDescription(achievementId)
             if row._def and row._def.isRaid then isRaid = true end
             if row._def and row._def.requiredKills and not requiredKills then requiredKills = row._def.requiredKills end
             if row._def and row._def.bossOrder and not bossOrder then bossOrder = row._def.bossOrder end
+            if row._def and row._def.requiredTarget and not requiredTarget then requiredTarget = row._def.requiredTarget end
+            if row._def and row._def.targetOrder and not targetOrder then targetOrder = row._def.targetOrder end
             if row._def and row._def.explorationZone and not explorationZone then
                 explorationZone = row._def.explorationZone
             end
@@ -928,6 +940,10 @@ local function GetAchievementDescription(achievementId)
             if not achievementOrder and row.achievementOrder then
                 achievementOrder = row.achievementOrder
             end
+            if not requiredTarget and row.requiredTarget then requiredTarget = row.requiredTarget end
+            if not targetOrder and row.targetOrder then targetOrder = row.targetOrder end
+            if row._def and row._def.requiredTarget and not requiredTarget then requiredTarget = row._def.requiredTarget end
+            if row._def and row._def.targetOrder and not targetOrder then targetOrder = row._def.targetOrder end
         end
     end
     
@@ -1035,6 +1051,86 @@ local function GetAchievementDescription(achievementId)
         else
             for npcId, need in pairs(requiredKills) do
                 processBossEntry(npcId, need)
+            end
+        end
+    end
+
+    -- Required NPC targets (target once / progress in metTargets; legacy metKings supported)
+    if requiredTarget and next(requiredTarget) ~= nil then
+        if description ~= "" then
+            description = description .. "\n\n|cff00ff00Required Targets:|r"
+        else
+            description = "|cff00ff00Required Targets:|r"
+        end
+        local progress = addon and addon.GetProgress and addon.GetProgress(achievementId)
+        local met = {}
+        if progress and type(progress.metTargets) == "table" then
+            for k, v in pairs(progress.metTargets) do
+                if v then
+                    met[k] = true
+                    local kn = tonumber(k)
+                    if kn then met[kn] = true end
+                end
+            end
+        end
+        if progress and type(progress.metKings) == "table" then
+            for k, v in pairs(progress.metKings) do
+                if v then
+                    met[k] = true
+                    local kn = tonumber(k)
+                    if kn then met[kn] = true end
+                end
+            end
+        end
+        local getBossNameFn = addon and addon.GetBossName
+        local function processTargetEntry(npcId, need)
+            local done = achievementCompleted
+            local displayName = ""
+            if type(need) == "table" then
+                local names = {}
+                for _, id in pairs(need) do
+                    local idn = tonumber(id) or id
+                    if not done and (met[idn] or met[id] or met[tostring(idn)]) then
+                        done = true
+                    end
+                    table_insert(names, (getBossNameFn and getBossNameFn(idn)) or ("Mob #" .. tostring(idn)))
+                end
+                if type(npcId) == "string" then
+                    displayName = npcId
+                else
+                    displayName = table_concat(names, " / ")
+                end
+            else
+                local idNum = tonumber(npcId) or npcId
+                displayName = (getBossNameFn and getBossNameFn(idNum)) or ("Mob #" .. tostring(idNum))
+                if not done then
+                    done = met[idNum] or met[tostring(idNum)] or met[npcId]
+                end
+            end
+            if done then
+                description = description .. "\n|cffffffff" .. displayName .. "|r"
+            else
+                description = description .. "\n|cff808080" .. displayName .. "|r"
+            end
+        end
+        -- targetOrder is optional: display order only. If omitted, list is sorted by npc id (order of targeting never matters for completion).
+        if targetOrder and #targetOrder > 0 then
+            for _, npcId in ipairs(targetOrder) do
+                local need = requiredTarget[npcId]
+                if need then
+                    processTargetEntry(npcId, need)
+                end
+            end
+        else
+            local keys = {}
+            for npcId, _ in pairs(requiredTarget) do
+                table_insert(keys, npcId)
+            end
+            table_sort(keys, function(a, b)
+                return (tonumber(a) or 0) < (tonumber(b) or 0)
+            end)
+            for _, npcId in ipairs(keys) do
+                processTargetEntry(npcId, requiredTarget[npcId])
             end
         end
     end
@@ -2084,6 +2180,7 @@ local function HookAchievementRefresh()
             
             -- Check if this achievement is tracked and if the progress change affects display
             local progressAffectsDisplay = key == "counts" or key == "itemOwned" or key == "killed" or key == "quest" or key == "soloKill" or key == "soloQuest" or key == "eligibleCounts" or key == "ineligibleKill"
+                or key == "metTargets"
             if achId and progressAffectsDisplay then
                 local achIdStr = tostring(achId)
                 local achIdNum = tonumber(achIdStr)

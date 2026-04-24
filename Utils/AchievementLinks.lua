@@ -316,6 +316,74 @@ if Old_ItemRef_SetHyperlink then
 				end
 			end
 
+			-- Required NPC targets (target-once style progress: metTargets / legacy metKings)
+			local showedTargetDetails = false
+			if rec and rec.requiredTarget and next(rec.requiredTarget) ~= nil then
+				showedTargetDetails = true
+				ItemRefTooltip:AddLine(" ")
+				ItemRefTooltip:AddLine("Required Targets:", 0, 1, 0)
+				local progressFn = addon and addon.GetProgress
+				local progress = progressFn and progressFn(rec.achId) or nil
+				local met = {}
+				if progress and type(progress.metTargets) == "table" then
+					for k, v in pairs(progress.metTargets) do
+						if v then
+							met[k] = true
+							local kn = tonumber(k)
+							if kn then met[kn] = true end
+						end
+					end
+				end
+				if progress and type(progress.metKings) == "table" then
+					for k, v in pairs(progress.metKings) do
+						if v then
+							met[k] = true
+							local kn = tonumber(k)
+							if kn then met[kn] = true end
+						end
+					end
+				end
+				local getBossNameFn = addon and addon.GetBossName
+				local isCompletedLink = ViewerHasCompletedAchievement(achId)
+				local keys = {}
+				if rec.targetOrder and #rec.targetOrder > 0 then
+					for _, npcId in ipairs(rec.targetOrder) do
+						table_insert(keys, npcId)
+					end
+				else
+					for npcId, _ in pairs(rec.requiredTarget) do
+						table_insert(keys, npcId)
+					end
+					table_sort(keys, function(a, b)
+						return (tonumber(a) or 0) < (tonumber(b) or 0)
+					end)
+				end
+				for _, entry in ipairs(keys) do
+					local need = rec.requiredTarget[entry]
+					local bossName = ""
+					local done = isCompletedLink
+					local idNum = tonumber(entry) or entry
+					if type(need) == "table" then
+						local bossNames = {}
+						for _, id in pairs(need) do
+							local idn = tonumber(id) or id
+							table_insert(bossNames, (getBossNameFn and getBossNameFn(idn)) or ("Mob #" .. tostring(idn)))
+							if not done and (met[idn] or met[id] or met[tostring(idn)]) then
+								done = true
+							end
+						end
+						bossName = table_concat(bossNames, " / ")
+					else
+						bossName = (getBossNameFn and getBossNameFn(idNum)) or ("Mob #" .. tostring(idNum))
+						if not done then
+							done = met[idNum] or met[tostring(idNum)] or met[entry]
+						end
+					end
+					local lr, lg, lb = done and 1 or 0.5, done and 1 or 0.5, done and 1 or 0.5
+					ItemRefTooltip:AddLine(bossName, lr, lg, lb)
+				end
+			end
+
 			-- Special handling for dungeon set achievements: list required items
 			local showedDungeonSetDetails = false
 			if rec and rec.requiredItems and next(rec.requiredItems) ~= nil then
@@ -352,7 +420,7 @@ if Old_ItemRef_SetHyperlink then
 
             -- Non-dungeon: Zone only (points shown with completion status)
             -- Do not use mapName/mapID here - they often fall back to title; avoid showing title in zone slot
-            if not showedDungeonDetails and not showedDungeonSetDetails then
+            if not showedDungeonDetails and not showedDungeonSetDetails and not showedTargetDetails then
                 local zoneText
                 if rec then
                     if type(rec.zone) == "string" and rec.zone ~= "" then

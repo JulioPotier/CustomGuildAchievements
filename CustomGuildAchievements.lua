@@ -33,6 +33,66 @@ local RefreshOutleveledAll
 local LoadTabPosition
 local QuestTrackedRows = {}
 
+-- =========================================================
+-- Guild lock (Adventure Co)
+-- =========================================================
+-- Global constant (requested): accessible from anywhere.
+_G.CGA_GUILD_NAME = _G.CGA_GUILD_NAME or "Adventure Co"
+
+-- GetGuildInfo("player") is often nil on the first PLAYER_LOGIN tick even when the player is in a guild.
+-- Treating that as "not in Adventure Co" made DisableAddonUI() run and skipped RegisterQueuedAchievements
+-- (PLAYER_LOGIN path checks addon.Disabled), so restorationsComplete never became true and nothing could complete.
+local function IsInTargetGuild()
+    if type(IsInGuild) == "function" and not IsInGuild() then
+        return false
+    end
+    local guildName = GetGuildInfo("player")
+    if not guildName or guildName == "" then
+        return true
+    end
+    return guildName == _G.CGA_GUILD_NAME
+end
+
+if addon then
+    addon.IsInTargetGuild = IsInTargetGuild
+end
+
+local function DisableAddonUI()
+    if addon then addon.Disabled = true end
+
+    local function hideTab()
+        local tab = _G[(addonName or "CustomGuildAchievements") .. "Tab"]
+        if not tab then return false end
+        tab:Hide()
+        tab:EnableMouse(false)
+        -- If something tries to show it later, immediately hide again.
+        if not tab._cgaHideHooked then
+            tab:HookScript("OnShow", function(self)
+                if addon and addon.Disabled then
+                    self:Hide()
+                end
+            end)
+            tab._cgaHideHooked = true
+        end
+        if tab.squareFrame then
+            tab.squareFrame:Hide()
+            tab.squareFrame:EnableMouse(false)
+        end
+        return true
+    end
+
+    -- Hide character tab now (and retry shortly in case the frame is created later).
+    if not hideTab() then
+        C_Timer.After(0, hideTab)
+        C_Timer.After(0.5, hideTab)
+        C_Timer.After(1.5, hideTab)
+    end
+
+    -- Hide the character panel frame if it exists
+    local panel = _G["HardcoreAchievementsFrame"]
+    if panel then panel:Hide() end
+end
+
 -- True while we're doing the initial registration + post-login heavy operations.
 -- Used to suppress redundant UI recalculations (sorting/points/status) until the end of the initial load.
 if addon then
@@ -587,26 +647,31 @@ local function PositionRowBorder(row)
     end
 end
 
--- Format timestamp into readable date/time string (locale-aware format)
+-- Format timestamp into readable date/time string (locale-aware date; 24h time h:m:s)
 local function FormatTimestamp(timestamp)
     if not timestamp then return "" end
-    
+
     local dateInfo = date("*t", timestamp)
+    if not dateInfo then return "" end
+
     local locale = GetLocale()
-    
+    local timePart = string_format(" %02d:%02d:%02d", dateInfo.hour, dateInfo.min, dateInfo.sec)
+
     -- US locale uses mm/dd/yy, most others use dd/mm/yy
     if locale == "enUS" then
-        -- US format: mm/dd/yy
-        return string_format("%02d/%02d/%02d", 
-            dateInfo.month, 
-            dateInfo.day, 
-            dateInfo.year % 100)
+        return string_format(
+            "%02d/%02d/%02d",
+            dateInfo.month,
+            dateInfo.day,
+            dateInfo.year % 100
+        ) .. timePart
     else
-        -- European/International format: dd/mm/yy
-        return string_format("%02d/%02d/%02d", 
-            dateInfo.day, 
-            dateInfo.month, 
-            dateInfo.year % 100)
+        return string_format(
+            "%02d/%02d/%02d",
+            dateInfo.day,
+            dateInfo.month,
+            dateInfo.year % 100
+        ) .. timePart
     end
 end
 
@@ -746,7 +811,6 @@ local function AchievementCount()
             local isExploration = row._def and row._def.isExploration
             local isRidiculous = row._def and row._def.isRidiculous
             local isSecret = row._def and row._def.isSecret
-            local isRares = row._def and row._def.isRares
             local excludeFromCount = row._def and row._def.excludeFromCount
             -- Note: isRaid is Core (index 4), so it always counts - don't exclude it
             local shouldCount = not hiddenByProfession and not hiddenUntilComplete and not excludeFromCount and (not isVariation or row.completed) and (not isDungeonSet or row.completed) and (not isReputation or row.completed) and (not isExploration or row.completed) and (not isRidiculous or row.completed) and (not isSecret or row.completed) and (not isRares or row.completed)
@@ -1105,13 +1169,12 @@ local function ApplyOutleveledStyle(row)
         if row.IconFrameGold then row.IconFrameGold:Hide() end
         if row.IconFrame then row.IconFrame:Show() end
         
+        -- Failed/outleveled: no date/time on the row; still persist failedAt for list sorting
         if row.TS then
-            if isOutleveled then
-                local failedAt = GetFailureTimestamp(achId) or EnsureFailureTimestamp(achId) or time()
-                row.TS:SetText(FormatTimestamp(failedAt))
-            else
-                row.TS:SetText("")
-            end
+            row.TS:SetText("")
+        end
+        if isOutleveled and achId then
+            EnsureFailureTimestamp(achId)
         end
     end
     
@@ -1396,6 +1459,24 @@ local function RestoreCompletionsFromDB()
         rows = (AchievementPanel and AchievementPanel.achievements) or {}
     end
 
+    -- Purge DB entries for achievements that no longer exist.
+    -- If you change an achievement ID, the old one is intentionally invalidated and should not remain "completed" anywhere.
+    do
+        local valid = {}
+        for _, row in ipairs(rows) do
+            local id = row and (row.id or row.achId)
+            if id then valid[tostring(id)] = true end
+        end
+        for achId, _ in pairs(cdb.achievements) do
+            if not valid[tostring(achId)] then
+                cdb.achievements[achId] = nil
+                if cdb.progress then
+                    cdb.progress[achId] = nil
+                end
+            end
+        end
+    end
+
     for _, row in ipairs(rows) do
         local id = row.id or row.achId or (row.Title and row.Title:GetText())
         local rec = id and cdb.achievements and cdb.achievements[id]
@@ -1456,6 +1537,11 @@ local function RestoreCompletionsFromDB()
 end
 
 local function ToggleAchievementCharacterFrameTab()
+    if addon and addon.Disabled then
+        DisableAddonUI()
+        StaticPopup_Show("CGA_GUILD_LOCK")
+        return
+    end
     local isShown = CharacterFrame and CharacterFrame:IsShown() and
                    (AchievementPanel and AchievementPanel:IsShown() or (Tab and Tab.squareFrame and Tab.squareFrame:IsShown()))
     -- Resolve at call time: addon.ShowAchievementTab is set later in this file
@@ -1473,6 +1559,11 @@ local function ToggleAchievementCharacterFrameTab()
 end
 
 local function ShowHardcoreAchievementWindow()
+    if addon and addon.Disabled then
+        DisableAddonUI()
+        StaticPopup_Show("CGA_GUILD_LOCK")
+        return
+    end
     local _, cdb = GetCharDB()
     -- Check if user wants to use Character Panel instead of Dashboard (default is Character Panel)
     local useCharacterPanel = true
@@ -1921,7 +2012,7 @@ end
 
 if addon then addon.OpenOptionsPanel = OpenOptionsPanel end
 
-BINDING_NAME_HCA_TOGGLE = "Toggle Achievements"
+BINDING_NAME_CGA_TOGGLE = "Toggle Achievements"
 
 -- Lazily initialize minimap button resources on demand.
 local LDB, LDBIcon, minimapDataObject
@@ -2003,6 +2094,14 @@ initFrame:RegisterEvent("ADDON_LOADED")
 initFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_LOGIN" then
         playerGUID = UnitGUID("player")
+
+        -- Guild lock: disable addon outside Adventure Co
+        if not IsInTargetGuild() then
+            DisableAddonUI()
+            StaticPopup_Show("CGA_GUILD_LOCK")
+            -- Stop early: no minimap button, no tab positioning, no init work.
+            return
+        end
 
         local db, cdb = GetCharDB()
         if cdb then
@@ -2129,6 +2228,19 @@ StaticPopupDialogs["Hardcore Achievements TBC"] = {
     --OnCancel = function()
         -- Popup automatically closes
     --end,
+}
+
+-- Define the guild-lock popup (Adventure Co only)
+StaticPopupDialogs["CGA_GUILD_LOCK"] = {
+    text = "|cff008066CustomGuildAchievements|r\n\nThis addon is reserved for guild:\n|cffffd100" .. tostring(_G.CGA_GUILD_NAME) .. "|r\n\nYou are not currently in this guild, so the addon will be deactivated.",
+    button1 = "Okay",
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+    OnAccept = function()
+        -- Popup automatically closes
+    end,
 }
 
 -- =========================================================
@@ -2904,80 +3016,13 @@ local function ApplyFilter()
             end
         end
         
-        -- Hide/show achievements based on checkbox filter
+        -- No category filter in this simplified build (Guild-only catalog).
+        -- Keep the existing status/hidden checks above; show everything else.
         if row._def then
-            local isCompleted = row.completed == true
             local def = row._def
-            
-            if def.isQuest then
-                -- Quest (Catalog non-secret): check index 1
-                if not ShouldShowByCheckboxFilter(def, isCompleted, 1, nil) then
-                    shouldShow = false
-                end
-            elseif def.isVariation then
-                -- Variations: check based on variation type (Solo=10, Duo=11, Trio=12)
-                -- Check this BEFORE isDungeon since variations inherit isDungeon from base
-                if not ShouldShowByCheckboxFilter(def, isCompleted, nil, def.variationType) then
-                    shouldShow = false
-                end
-            elseif def.isDungeon then
-                -- Dungeon (DungeonCatalog): check index 2
-                if not ShouldShowByCheckboxFilter(def, isCompleted, 2, nil) then
-                    shouldShow = false
-                end
-            elseif def.isHeroicDungeon then
-                -- Heroic Dungeons: check index 3 (heroics don't get isDungeon set, so independent of Dungeons filter)
-                if not ShouldShowByCheckboxFilter(def, isCompleted, 3, nil) then
-                    shouldShow = false
-                end
-            elseif def.isRaid then
-                -- Raids: check index 4
-                if not ShouldShowByCheckboxFilter(def, isCompleted, 4, nil) then
-                    shouldShow = false
-                end
-            elseif def.isProfession then
-                -- Professions: check index 5
-                if not ShouldShowByCheckboxFilter(def, isCompleted, 5, nil) then
-                    shouldShow = false
-                end
-            elseif def.isMeta then
-                -- Meta: check index 6
-                if not ShouldShowByCheckboxFilter(def, isCompleted, 6, nil) then
-                    shouldShow = false
-                end
-            elseif def.isReputation then
-                -- Reputations: check index 7
-                if not ShouldShowByCheckboxFilter(def, isCompleted, 7, nil) then
-                    shouldShow = false
-                end
-            elseif def.isExploration then
-                -- Exploration: check index 8
-                if not ShouldShowByCheckboxFilter(def, isCompleted, 8, nil) then
-                    shouldShow = false
-                end
-            elseif def.isDungeonSet then
-                -- Dungeon Sets: check index 9
-                if not ShouldShowByCheckboxFilter(def, isCompleted, 9, nil) then
-                    shouldShow = false
-                end
-            elseif def.isRidiculous then
-                -- Ridiculous: check index 13
-                if not ShouldShowByCheckboxFilter(def, isCompleted, 13, nil) then
-                    shouldShow = false
-                end
-            elseif def.isRares then
-                -- Rares: check index 15
-                if not ShouldShowByCheckboxFilter(def, isCompleted, 15, nil) then
-                    shouldShow = false
-                end
-            elseif def.isSecret then
-                -- Secret: check index 14
-                if not ShouldShowByCheckboxFilter(def, isCompleted, 14, nil) then
-                    shouldShow = false
-                end
-            else
-                -- Fallback: default to showing if no category flag is set
-                -- (This should not happen, but included for safety)
+            if not def.isGuild then
+                -- In case anything non-guild slips in, hide defensively.
+                shouldShow = false
             end
         end
         
@@ -2995,31 +3040,8 @@ end
 if addon then addon.ApplyFilter = ApplyFilter end
 
 -- Create and initialize the filter dropdown using centralized helper
-AchievementPanel.filterDropdown = FilterDropdown and FilterDropdown:CreateAndInitializeDropdown(
-    AchievementPanel,
-    {
-        anchorPoint = "TOPRIGHT",
-        anchorTo = AchievementPanel,
-        xOffset = -20,
-        yOffset = -52,
-        width = 60
-    },
-    {
-        onFilterChange = function(filterValue)
-            ApplyFilter()
-        end,
-        onCheckboxChange = function(checkboxIndex, newState)
-            -- Checkbox state is automatically saved to database in FilterDropdown
-            -- Re-apply filter to show/hide achievements when checkbox changes
-            ApplyFilter()
-        end,
-        onStatusFilterChange = function(statusIndex, newState)
-            -- Status filter state is automatically saved to database in FilterDropdown
-            -- Re-apply filter to show/hide achievements when status filter changes
-            ApplyFilter()
-        end
-    }
-)
+-- No filter dropdown in this simplified build.
+AchievementPanel.filterDropdown = nil
 
 --AchievementPanel.Text = AchievementPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 --AchievementPanel.Text:SetPoint("TOP", 5, -45)
@@ -3039,7 +3061,7 @@ AchievementPanel.PointsLabelText:SetText(" pts")
 AchievementPanel.PointsLabelText:SetTextColor(0.6, 0.9, 0.6)
 
 AchievementPanel.CountsText = AchievementPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-AchievementPanel.CountsText:SetPoint("BOTTOMRIGHT", filterDropdown, "TOPRIGHT", -50, 20)
+AchievementPanel.CountsText:SetPoint("TOPRIGHT", AchievementPanel, "TOPRIGHT", -40, -55)
 AchievementPanel.CountsText:SetText("(0/0)")
 AchievementPanel.CountsText:SetTextColor(0.8, 0.8, 0.8)
 
@@ -3102,26 +3124,7 @@ AchievementPanel.SettingsButton:SetScript("OnLeave", function()
     GameTooltip:Hide()
 end)
 
--- Dashboard button (next to Settings button)
-AchievementPanel.DashboardButton = CreateFrame("Button", nil, AchievementPanel)
-AchievementPanel.DashboardButton:SetSize(24, 24)
-AchievementPanel.DashboardButton:SetPoint("LEFT", AchievementPanel.SettingsButton, "RIGHT", 1, -2)
-AchievementPanel.DashboardButton.Icon = AchievementPanel.DashboardButton:CreateTexture(nil, "ARTWORK")
-AchievementPanel.DashboardButton.Icon:SetAllPoints(AchievementPanel.DashboardButton)
-AchievementPanel.DashboardButton.Icon:SetTexture("Interface\\AchievementFrame\\UI-Achievement-Progressive-Shield-NoPoints")
-AchievementPanel.DashboardButton:SetScript("OnClick", function()
-    if addon and addon.ShowDashboard then
-        addon.ShowDashboard()
-    end
-end)
-AchievementPanel.DashboardButton:SetScript("OnEnter", function(self)
-    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    GameTooltip:SetText("Open Dashboard", nil, nil, nil, nil, true)
-    GameTooltip:Show()
-end)
-AchievementPanel.DashboardButton:SetScript("OnLeave", function()
-    GameTooltip:Hide()
-end)
+-- Dashboard button removed (no dashboard needed)
 
 -- Scrollable container inside the AchievementPanel
 AchievementPanel.Scroll = CreateFrame("ScrollFrame", "$parentScroll", AchievementPanel, "UIPanelScrollFrameTemplate")
@@ -3641,6 +3644,12 @@ local function CreateAchievementRow(parent, achId, title, tooltip, icon, level, 
     if def and def.achievementOrder then
         data.achievementOrder = def.achievementOrder
     end
+    if def and def.requiredTarget then
+        data.requiredTarget = def.requiredTarget
+    end
+    if def and def.targetOrder then
+        data.targetOrder = def.targetOrder
+    end
 
     -- Secret/hidden achievement support (model fields; UI reveal happens when a frame exists)
     if isSecretDef then
@@ -3751,6 +3760,39 @@ end
 
 -- Expose EvaluateCustomCompletions globally for use by other modules
 if addon then addon.EvaluateCustomCompletions = EvaluateCustomCompletions end
+
+-- When guild/character name was not available at login, re-run completion check once GetGuildInfo is populated
+do
+    local cgaRoster = CreateFrame("Frame")
+    local cgaLockPopupShown = false
+    cgaRoster:RegisterEvent("GUILD_ROSTER_UPDATE")
+    cgaRoster:SetScript("OnEvent", function()
+        if not addon then return end
+        if not IsInGuild() then
+            return
+        end
+        local n = GetGuildInfo("player")
+        if n and n ~= "" and n ~= _G.CGA_GUILD_NAME then
+            if not addon.Disabled then
+                DisableAddonUI()
+                if not cgaLockPopupShown then
+                    cgaLockPopupShown = true
+                    StaticPopup_Show("CGA_GUILD_LOCK")
+                end
+            end
+            return
+        end
+        if addon.Disabled or not restorationsComplete then
+            return
+        end
+        if addon.CheckPendingCompletions then
+            addon.CheckPendingCompletions()
+        end
+        if addon.EvaluateCustomCompletions then
+            addon.EvaluateCustomCompletions(UnitLevel("player") or 1)
+        end
+    end)
+end
 
 -- =========================================================
 -- Event bridge: forward PARTY_KILL to any rows with a tracker
@@ -4886,7 +4928,7 @@ Tab:HookScript("OnEnter", function(self)
     if Tab.squareFrame and Tab.squareFrame:IsShown() and Tab.squareFrame.highlight then
         Tab.squareFrame.highlight:Show()
     end
-    local key1, key2 = GetBindingKey("HCA_TOGGLE")
+    local key1, key2 = GetBindingKey("CGA_TOGGLE")
     local keybindText = ""
     if key1 then keybindText = "|cffffd100 (" .. key1 .. ")|r" end
     -- Show tooltip with drag instructions
@@ -5075,6 +5117,10 @@ do
         end
 
         -- PLAYER_LOGIN: run registration queue here so UnitFactionGroup/UnitRace/UnitClass are valid for IsEligible
+        if addon and addon.Disabled then
+            -- Don't register anything outside the target guild.
+            return
+        end
         if CharacterFrame and EnsureAchievementPanelCreated then
             EnsureAchievementPanelCreated()
         end
