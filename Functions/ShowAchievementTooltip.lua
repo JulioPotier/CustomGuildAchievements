@@ -213,6 +213,7 @@ local function ShowTargetRequirements(achId, requiredTarget, targetOrder, achiev
     end
     local isRaid = (def and def.isRaid) or (achDef and achDef.isRaid)
     local getBossNameFn = isRaid and (addon and addon.GetRaidBossName) or (addon and addon.GetBossName)
+    local secretTracker = ((def and def.secretTracker) or (achDef and achDef.secretTracker)) and true or false
     local function processTargetEntry(npcId, need)
         local done = achievementCompleted
         local displayName = ""
@@ -230,12 +231,21 @@ local function ShowTargetRequirements(achId, requiredTarget, targetOrder, achiev
             else
                 displayName = table_concat(names, " / ")
             end
+        elseif type(need) == "string" and need ~= "" then
+            displayName = need
+            if not done then
+                local idNum = tonumber(npcId) or npcId
+                done = met[idNum] or met[tostring(idNum)] or met[npcId]
+            end
         else
             local idNum = tonumber(npcId) or npcId
             displayName = (getBossNameFn and getBossNameFn(idNum)) or ("Mob #" .. tostring(idNum))
             if not done then
                 done = met[idNum] or met[tostring(idNum)] or met[npcId]
             end
+        end
+        if secretTracker and not done then
+            displayName = "???"
         end
         if done then
             GameTooltip:AddLine(displayName, 1, 1, 1)
@@ -300,6 +310,12 @@ local function ShowTalkToRequirements(achId, requiredTalkTo, talkToOrder, achiev
                 displayName = npcId
             else
                 displayName = table_concat(names, " / ")
+            end
+        elseif type(need) == "string" and need ~= "" then
+            displayName = need
+            if not done then
+                local idNum = tonumber(npcId) or npcId
+                done = talked[idNum] or talked[tostring(idNum)] or talked[npcId]
             end
         else
             local idNum = tonumber(npcId) or npcId

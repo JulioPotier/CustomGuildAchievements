@@ -88,16 +88,16 @@ local function ViewerHasCompletedAchievement(achId)
 end
 
 -- Build a bracket format string for chat (used before chat filter converts to hyperlink)
--- Format: [HCA:(achId)] - icon, points, and other data are looked up locally on receiver's end
+-- Format: [CGA:(achId)] - icon, points, and other data are looked up locally on receiver's end
 local function GetAchievementBracket(achId)
 	-- For some achievements, the title is player-specific (e.g., includes the sender's name).
 	-- In those cases, send an expanded bracket form so receivers don't recompute a different title locally.
-	-- Pattern handled by ChatFilter_HCA below: [HCA: Title (achId)]
+	-- Pattern handled by ChatFilter_HCA below: [CGA: Title (achId)]
 	local rec = GetAchievementById(achId)
 	if rec and rec.linkUsesSenderTitle and rec.title then
-		return string_format("[HCA: %s (%s)]", tostring(rec.title), tostring(achId))
+		return string_format("[CGA: %s (%s)]", tostring(rec.title), tostring(achId))
 	end
-	return string_format("[HCA:(%s)]", tostring(achId))
+	return string_format("[CGA:(%s)]", tostring(achId))
 end
 
 -- Public: build a hyperlink string for an achievement id and title
@@ -501,9 +501,9 @@ local function ChatFilter_HCA(chatFrame, event, msg, author, ...)
     local function ViewerHasCompleted(id)
         return ViewerHasCompletedAchievement(id)
     end
-    -- Extended form with title: [HCA: Title (id)]
+    -- Extended form with title: [CGA: Title (id)]
     -- Title from message is sender-stable; prefer it for linkUsesSenderTitle
-    msg = msg:gsub("%[HCA:%s*(.-)%s*%(([^%)]+)%)%]", function(title, id)
+    msg = msg:gsub("%[CGA:%s*(.-)%s*%(([^%)]+)%)%]", function(title, id)
         local rec = GetAchievementById(id)
         local displayTitle
         if rec and rec.linkUsesSenderTitle and title and title ~= "" then
@@ -525,9 +525,9 @@ local function ChatFilter_HCA(chatFrame, event, msg, author, ...)
         changed = true
         return link
     end)
-    -- Compact form without title: [HCA:(id)]
+    -- Compact form without title: [CGA:(id)]
     -- For linkUsesSenderTitle: use linkTitle(senderNameForLink) so all viewers see sender's name
-    msg = msg:gsub("%[HCA:%s*%(([^%)]+)%)%]", function(id)
+    msg = msg:gsub("%[CGA:%s*%(([^%)]+)%)%]", function(id)
         local rec = GetAchievementById(id)
         local displayTitle
         if rec and rec.linkUsesSenderTitle and senderNameForLink ~= "" and type(rec.linkTitle) == "function" then

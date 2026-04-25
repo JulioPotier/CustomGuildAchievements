@@ -27,11 +27,6 @@ local table_sort = table.sort
 -- Used by tooltips/tracker for `requiredTarget` and other NPC id lists.
 -- Must be available even if no dungeon achievements are registered.
 local BOSS_NAMES = {
-  -- // KINGS
-  [1747] = "Anduin Wrynn",
-  [2784] = "King Magni Bronzebeard",
-  [7937] = "High Tinker Mekkatorque",
-  [7999] = "Tyrande Whisperwind",
   -- NOTE: The rest of this mapping lives below, but is still in this single table.
 }
 

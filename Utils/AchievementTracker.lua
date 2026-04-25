@@ -1083,6 +1083,7 @@ local function GetAchievementDescription(achievementId)
             end
         end
         local getBossNameFn = addon and addon.GetBossName
+        local secretTracker = (achDef and achDef.secretTracker) or false
         local function processTargetEntry(npcId, need)
             local done = achievementCompleted
             local displayName = ""
@@ -1100,12 +1101,22 @@ local function GetAchievementDescription(achievementId)
                 else
                     displayName = table_concat(names, " / ")
                 end
+            elseif type(need) == "string" and need ~= "" then
+                -- If the def provides a display name directly, use it (avoids duplicating name maps elsewhere).
+                displayName = need
+                if not done then
+                    local idNum = tonumber(npcId) or npcId
+                    done = met[idNum] or met[tostring(idNum)] or met[npcId]
+                end
             else
                 local idNum = tonumber(npcId) or npcId
                 displayName = (getBossNameFn and getBossNameFn(idNum)) or ("Mob #" .. tostring(idNum))
                 if not done then
                     done = met[idNum] or met[tostring(idNum)] or met[npcId]
                 end
+            end
+            if secretTracker and not done then
+                displayName = "???"
             end
             if done then
                 description = description .. "\n|cffffffff" .. displayName .. "|r"
@@ -1490,7 +1501,7 @@ local function GetAchievementLine(self, index)
                         -- Chat edit box is active: link achievement
                         local achId = line.achievementId
                         if achId then
-                            local bracket = GetAchievementBracket and GetAchievementBracket(achId) or string_format("[HCA:(%s)]", tostring(achId))
+                            local bracket = GetAchievementBracket and GetAchievementBracket(achId) or string_format("[CGA:(%s)]", tostring(achId))
                             local currentText = editBox:GetText() or ""
                             if currentText == "" then
                                 editBox:SetText(bracket)

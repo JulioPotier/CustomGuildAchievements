@@ -942,7 +942,7 @@ local function CreateDashboardIcon(parent)
       -- Check if chat edit box is active/visible
       if editBox and editBox:IsVisible() then
         -- Chat edit box is active: link achievement (original behavior)
-        local bracket = GetAchievementBracket and GetAchievementBracket(self.achId) or string_format("[HCA:(%s)]", tostring(self.achId))
+        local bracket = GetAchievementBracket and GetAchievementBracket(self.achId) or string_format("[CGA:(%s)]", tostring(self.achId))
         local currentText = editBox:GetText() or ""
         if currentText == "" then
           editBox:SetText(bracket)
@@ -1374,7 +1374,7 @@ local function CreateDashboardModernRow(parent, srow)
             -- Check if chat edit box is active/visible
             if editBox and editBox:IsVisible() then
                 -- Chat edit box is active: link achievement (original behavior)
-                local bracket = GetAchievementBracket and GetAchievementBracket(self.achId) or string_format("[HCA:(%s)]", tostring(self.achId))
+                local bracket = GetAchievementBracket and GetAchievementBracket(self.achId) or string_format("[CGA:(%s)]", tostring(self.achId))
                 local currentText = editBox:GetText() or ""
                 if currentText == "" then
                     editBox:SetText(bracket)

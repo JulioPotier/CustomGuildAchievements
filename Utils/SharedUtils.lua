@@ -206,6 +206,161 @@ local function GetAchievementDisplayValues(source, options)
 end
 
 -- =========================================================
+-- Guild / Required Target Helpers (shared)
+-- =========================================================
+
+local strsplit = strsplit
+local UnitExists = UnitExists
+local UnitGUID = UnitGUID
+local GetTime = GetTime
+local C_Timer = C_Timer
+
+local function GetClassIcon()
+    local ucp = UnitClass("player")
+    local c_tbl =
+    {
+        ["Paladin"] = "Interface\\AddOns\\CustomGuildAchievements\\Images\\Class_PALADIN.png",
+        ["Warrior"] = "Interface\\AddOns\\CustomGuildAchievements\\Images\\Class_WARRIOR.png",
+        ["Hunter"] = "Interface\\AddOns\\CustomGuildAchievements\\Images\\Class_HUNTER.png",
+        ["Rogue"] = "Interface\\AddOns\\CustomGuildAchievements\\Images\\Class_ROGUE.png",
+        ["Priest"] = "Interface\\AddOns\\CustomGuildAchievements\\Images\\Class_PRIEST.png",
+        --["Shaman"] = "Interface\\AddOns\\CustomGuildAchievements\\Images\\Class_SHAMAN.png",
+        ["Mage"] = "Interface\\AddOns\\CustomGuildAchievements\\Images\\Class_MAGE.png",
+        ["Warlock"] = "Interface\\AddOns\\CustomGuildAchievements\\Images\\Class_WARLOCK.png",
+        ["Druid"] = "Interface\\AddOns\\CustomGuildAchievements\\Images\\Class_DRUID.png",
+    }
+
+    return c_tbl[ucp]
+end
+
+local function RequiredTargetContains(requiredTarget, npcId)
+    if type(requiredTarget) ~= "table" or not npcId then return false end
+    local need = requiredTarget[npcId] or requiredTarget[tostring(npcId)]
+    if need ~= nil then return true end
+    -- Support "any-of" entries: { [slot] = {id1,id2,...} }.
+    for _, v in pairs(requiredTarget) do
+        if type(v) == "table" then
+            for _, id in pairs(v) do
+                local idn = tonumber(id) or id
+                if idn == npcId or tostring(idn) == tostring(npcId) then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+local function GetMergedMetTargets(p)
+    if type(p) ~= "table" then return {} end
+    local out = {}
+    local function merge(src)
+        if type(src) ~= "table" then return end
+        for k, v in pairs(src) do
+            if v then
+                out[k] = true
+                local kn = tonumber(k)
+                if kn then out[kn] = true end
+            end
+        end
+    end
+    merge(p.metTargets)
+    merge(p.metKings)
+    return out
+end
+
+local function CountSatisfiedRequiredTargets(met, required)
+    if type(met) ~= "table" or type(required) ~= "table" then return 0 end
+    local n = 0
+    for npcId, need in pairs(required) do
+        if type(need) == "table" then
+            local any = false
+            for _, id in pairs(need) do
+                local idn = tonumber(id) or id
+                if met[idn] or met[id] or met[tostring(idn)] then
+                    any = true
+                    break
+                end
+            end
+            if any then n = n + 1 end
+        else
+            local idn = tonumber(npcId) or npcId
+            if met[idn] or met[npcId] or met[tostring(idn)] then
+                n = n + 1
+            end
+        end
+    end
+    return n
+end
+
+local function CountRequiredTargetEntries(required)
+    local n = 0
+    if type(required) ~= "table" then return 0 end
+    for _ in pairs(required) do
+        n = n + 1
+    end
+    return n
+end
+
+local function GetTargetNpcId()
+    if not UnitExists("target") then return nil end
+    local guid = UnitGUID("target")
+    if not guid then return nil end
+    local npcId = select(6, strsplit("-", guid))
+    return npcId and tonumber(npcId) or nil
+end
+
+-- Auto-discover requiredTarget progress on target changes.
+-- Option B throttle: 1 write/sec for the same npcId; allow immediate write when npcId changes.
+local function SetupRequiredTargetAutoTrack(defs, opts)
+    if not addon then return end
+    opts = opts or {}
+    local throttleSeconds = tonumber(opts.throttleSeconds) or 1.0
+    local lastNpcId, lastAt = nil, 0
+
+    local function Refresh()
+        if not addon or addon.Disabled then return end
+        if not (addon.GetProgress and addon.SetProgress) then return end
+
+        local npcId = GetTargetNpcId()
+        if not npcId then return end
+
+        local now = GetTime and GetTime() or 0
+        if lastNpcId == npcId then
+            if now > 0 and (now - (tonumber(lastAt) or 0)) < throttleSeconds then
+                return
+            end
+        end
+        lastNpcId, lastAt = npcId, now
+
+        for _, def in ipairs(defs or {}) do
+            if def and def.achId and RequiredTargetContains(def.requiredTarget, npcId) then
+                local p = addon.GetProgress(def.achId) or {}
+                p.metTargets = type(p.metTargets) == "table" and p.metTargets or {}
+                if not p.metTargets[npcId] then
+                    p.metTargets[npcId] = true
+                    addon.SetProgress(def.achId, "metTargets", p.metTargets)
+                end
+            end
+        end
+    end
+
+    local f = CreateFrame("Frame")
+    f:RegisterEvent("PLAYER_TARGET_CHANGED")
+    f:RegisterEvent("PLAYER_LOGIN")
+    f:SetScript("OnEvent", function(_, event)
+        if event == "PLAYER_LOGIN" then
+            -- In case of login race, try once after a tick
+            if C_Timer and C_Timer.After then
+                C_Timer.After(0, Refresh)
+            end
+        end
+        Refresh()
+    end)
+    return f
+end
+
+-- =========================================================
 -- Achievement Definition Registration
 -- =========================================================
 
@@ -271,6 +426,8 @@ local function RegisterAchievementDef(def, overrides)
         linkUsesSenderTitle = def.linkUsesSenderTitle,
         linkTitle = def.linkTitle,
         linkTooltip = def.linkTooltip,
+        -- Tracker/tooltip disclosure controls
+        secretTracker = def.secretTracker,
     }
     
     -- Apply any overrides (e.g., raids might set level = nil)
@@ -304,9 +461,15 @@ end
 if addon then
     addon.GetSetting = GetSetting
     addon.GetClassColor = GetClassColor
+    addon.GetClassIcon = GetClassIcon
     addon.GetAchievementDisplayValues = GetAchievementDisplayValues
     addon.UpdateCharacterPanelTabVisibility = UpdateCharacterPanelTabVisibility
     addon.SetUseCharacterPanel = SetUseCharacterPanel
     addon.RegisterAchievementDef = RegisterAchievementDef
+    addon.RequiredTargetContains = RequiredTargetContains
+    addon.GetMergedMetTargets = GetMergedMetTargets
+    addon.CountSatisfiedRequiredTargets = CountSatisfiedRequiredTargets
+    addon.CountRequiredTargetEntries = CountRequiredTargetEntries
+    addon.SetupRequiredTargetAutoTrack = SetupRequiredTargetAutoTrack
     addon.IsSelfFound = IsSelfFound
 end

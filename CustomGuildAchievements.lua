@@ -105,6 +105,7 @@ end
 local restorationsComplete = false
 -- Forward declaration so CheckPendingCompletions can call it before the full definition
 local CreateAchToast
+local MarkRowCompletedWithToast
 -- When true, MarkRowCompleted skips emote/guild broadcast (first run after login = retroactive completions)
 local skipBroadcastForRetroactive = false
 
@@ -1184,6 +1185,14 @@ end
 
 if addon then addon.ApplyOutleveledStyle = ApplyOutleveledStyle end
 
+-- Stable SavedVariables / progress key for a row (always the same string for a given acId).
+local function AchievementRowDbKey(row)
+    if not row then return nil end
+    local raw = row.achId or row.id
+    if raw == nil or raw == "" then return nil end
+    return tostring(raw)
+end
+
 -- Helper function to check if an achievement is already completed (in row or database)
 local function IsAchievementAlreadyCompleted(row)
     if not row then return false end
@@ -1193,15 +1202,17 @@ local function IsAchievementAlreadyCompleted(row)
         return true
     end
     
+    local key = AchievementRowDbKey(row)
+    if not key then
+        return false
+    end
+
     -- Check database to ensure we don't re-complete achievements
-    local id = row.id or row.achId
-    if id then
+    do
         local _, cdb = GetCharDB()
         if cdb and cdb.achievements then
-            local achIdStr = tostring(id)
-            local rec = cdb.achievements[achIdStr]
+            local rec = cdb.achievements[key] or cdb.achievements[row.id] or cdb.achievements[row.achId]
             if rec and rec.completed then
-                -- Achievement is completed in database but row.completed is false - sync it
                 row.completed = true
                 return true
             end
@@ -1212,9 +1223,14 @@ local function IsAchievementAlreadyCompleted(row)
 end
 
 -- Small utility: mark a UI row as completed visually + persist in DB
+-- Returns true if newly completed, false if already done or no stable ach id.
 local function MarkRowCompleted(row, cdbParam)
     if IsAchievementAlreadyCompleted(row) then 
-        return 
+        return false
+    end
+    local id = AchievementRowDbKey(row)
+    if not id then
+        return false
     end
     row.completed = true
     UntrackRowForQuest(row)
@@ -1224,7 +1240,6 @@ local function MarkRowCompleted(row, cdbParam)
     local _, cdb = GetCharDB()
     local wasSolo = false
     if cdb then
-        local id = row.achId or row.id or (row.Title and row.Title:GetText()) or ("row"..tostring(row))
         cdb.progress = cdb.progress or {}
         local progress = cdb.progress[id]
         
@@ -1408,6 +1423,7 @@ local function MarkRowCompleted(row, cdbParam)
     if tracker and type(tracker.Update) == "function" then
         tracker:Update()
     end
+    return true
 end
 
 local function CheckPendingCompletions()
@@ -1417,9 +1433,6 @@ local function CheckPendingCompletions()
     if not restorationsComplete then
         return
     end
-
-    -- Get current player level for level milestone achievements
-    local currentLevel = UnitLevel("player") or 1
 
     for _, row in ipairs(rows) do
         -- Check both row.completed and database to prevent re-completion
@@ -1460,39 +1473,55 @@ local function CheckPendingCompletions()
                         end
                     end
                     if requiredCount > 0 and satisfied >= requiredCount then
-                        MarkRowCompleted(row)
-                        local iconTex = (row.frame and row.frame.Icon and row.frame.Icon.GetTexture and row.frame.Icon:GetTexture()) or row.icon or 136116
-                        local titleText = (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or row.title or "Achievement"
-                        CreateAchToast(iconTex, titleText, row.points or 0, row.frame or row)
-                        completedThisRow = true
+                        if MarkRowCompletedWithToast(row) then
+                            completedThisRow = true
+                        end
                     end
                 end
             end
 
-            if not completedThisRow then
-                -- Check row.customIsCompleted first (most common for milestone/profession achievements)
-                local fn = row.customIsCompleted
-                if type(fn) ~= "function" then
-                    local id = row.id or row.achId
-                    if id and addon and addon.GetCustomIsCompleted then
-                        fn = addon.GetCustomIsCompleted(id)
+            -- New completion type: requiredOpenObject (loot window opened from a GameObject)
+            if (not completedThisRow) and def and type(def.requiredOpenObject) == "table" and addon and addon.GetProgress then
+                local id = row.id or row.achId
+                if id then
+                    local p = addon.GetProgress(id) or {}
+                    local opened = p and p.openedObjects
+                    local required = def.requiredOpenObject
+                    local satisfied = 0
+                    local requiredCount = 0
+                    if type(required) == "table" then
+                        for objectId, need in pairs(required) do
+                            requiredCount = requiredCount + 1
+                            local done = false
+                            if type(need) == "table" then
+                                for _, anyId in pairs(need) do
+                                    local anyNum = tonumber(anyId) or anyId
+                                    if opened and (opened[anyNum] or opened[tostring(anyNum)] or opened[anyId]) then
+                                        done = true
+                                        break
+                                    end
+                                end
+                            else
+                                local n = tonumber(objectId) or objectId
+                                if opened and (opened[n] or opened[tostring(n)] or opened[objectId]) then
+                                    done = true
+                                end
+                            end
+                            if done then
+                                satisfied = satisfied + 1
+                            end
+                        end
                     end
-                    if type(fn) ~= "function" and id and addon and addon.GetAchievementFunction then
-                        fn = addon.GetAchievementFunction(id, "IsCompleted")
-                    end
-                end
-                
-                if type(fn) == "function" then
-                    -- Pass current level to support level milestone achievements that accept newLevel parameter
-                    local ok, result = pcall(fn, currentLevel)
-                    if ok and result == true then
-                        MarkRowCompleted(row)
-                        local iconTex = (row.frame and row.frame.Icon and row.frame.Icon.GetTexture and row.frame.Icon:GetTexture()) or row.icon or 136116
-                        local titleText = (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or row.title or "Achievement"
-                        CreateAchToast(iconTex, titleText, row.points or 0, row.frame or row)
+                    if requiredCount > 0 and satisfied >= requiredCount then
+                        if MarkRowCompletedWithToast(row) then
+                            completedThisRow = true
+                        end
                     end
                 end
             end
+
+            -- customIsCompleted / IsCompleted: only EvaluateCustomCompletions (and level-up) to avoid
+            -- double toasts with CheckPendingCompletions (e.g. GUILD-WELCOME on GUILD_ROSTER_UPDATE).
         end
     end
 end
@@ -1525,8 +1554,15 @@ local function RestoreCompletionsFromDB()
     end
 
     for _, row in ipairs(rows) do
-        local id = row.id or row.achId or (row.Title and row.Title:GetText())
-        local rec = id and cdb.achievements and cdb.achievements[id]
+        local key = AchievementRowDbKey(row)
+        local rec = nil
+        if cdb.achievements then
+            if key then
+                rec = cdb.achievements[key] or cdb.achievements[row.id] or cdb.achievements[row.achId]
+            else
+                rec = (row.id and cdb.achievements[row.id]) or (row.achId and cdb.achievements[row.achId])
+            end
+        end
         if rec and rec.completed then
             row.completed = true
             if rec.points ~= nil then
@@ -1904,6 +1940,16 @@ CreateAchToast = function(iconTex, title, pts, achIdOrRow)
     end)
 end
 
+-- Play completion toast only when MarkRowCompleted actually applied (avoids duplicate sound/UI).
+MarkRowCompletedWithToast = function(row)
+    if not MarkRowCompleted(row) then
+        return false
+    end
+    local iconTex = (row.frame and row.frame.Icon and row.frame.Icon.GetTexture and row.frame.Icon:GetTexture()) or row.icon or 136116
+    local titleText = (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or row.title or "Achievement"
+    CreateAchToast(iconTex, titleText, row.points or 0, row.frame or row)
+    return true
+end
 
 -- Check if an achievement ID is a level milestone achievement (Level10, Level20, etc.)
 local function IsLevelMilestone(achId)
@@ -1999,6 +2045,9 @@ local function SetProgress(achId, key, value)
         -- During initial login, the RunHeavyOperations flow will handle completion checks
         if restorationsComplete then
             addon.CheckPendingCompletions()
+            if addon.EvaluateCustomCompletions then
+                addon.EvaluateCustomCompletions(UnitLevel("player") or 1)
+            end
             RefreshOutleveledAll()
             -- Full refresh so character panel, dashboard, tracker all get correct status (Pending Turn-in, solo, etc.)
             if addon.RefreshAllAchievementPoints then addon.RefreshAllAchievementPoints() end
@@ -2154,6 +2203,7 @@ initFrame:SetScript("OnEvent", function(self, event, ...)
         if cdb then
             -- Ensure settings table exists
             cdb.settings = cdb.settings or {}
+
             -- Default showCustomTab to true (visible by default, synced with useCharacterPanel)
             if cdb.settings.showCustomTab == nil then
                 cdb.settings.showCustomTab = true
@@ -3461,7 +3511,7 @@ local function CreateAchievementRowFromData(data, index)
             -- Check if chat edit box is active/visible
             if editBox and editBox:IsVisible() then
                 -- Chat edit box is active: link achievement (original behavior)
-                local bracket = GetAchievementBracket and GetAchievementBracket(row.achId) or string_format("[HCA:(%s)]", tostring(row.achId))
+                local bracket = GetAchievementBracket and GetAchievementBracket(row.achId) or string_format("[CGA:(%s)]", tostring(row.achId))
                 local currentText = editBox:GetText() or ""
                 if currentText == "" then
                     editBox:SetText(bracket)
@@ -3790,11 +3840,9 @@ EvaluateCustomCompletions = function(newLevel)
             if type(fn) == "function" then
                 local ok, result = pcall(fn, level)
                 if ok and result == true then
-                    MarkRowCompleted(row)
-                    local iconTex = (row.frame and row.frame.Icon and row.frame.Icon.GetTexture and row.frame.Icon:GetTexture()) or row.icon or 136116
-                    local titleText = (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or row.title or "Achievement"
-                    CreateAchToast(iconTex, titleText, row.points, row.frame or row)
-                    anyCompleted = true
+                    if MarkRowCompletedWithToast(row) then
+                        anyCompleted = true
+                    end
                 end
             end
         end
@@ -3907,6 +3955,89 @@ do
             end
             local _, _, _, _, _, npcId = strsplit("-", guid)
             return npcId and tonumber(npcId) or nil
+        end
+
+        local function getGameObjectIdFromGUID(guid)
+            if not guid then
+                return nil
+            end
+            local guidType = select(1, strsplit("-", guid))
+            if guidType ~= "GameObject" then
+                return nil
+            end
+            -- GameObject GUIDs follow the same convention as Creature GUIDs: the entryID is field 6.
+            local entryId = select(6, strsplit("-", guid))
+            return entryId and tonumber(entryId) or nil
+        end
+
+        -- requiredOpenObject helper: supports { [objectId]=1 } and { [slot]={id1,id2,...} }.
+        local function RequiredObjectListContains(required, objectId)
+            if type(required) ~= "table" or not objectId then return false end
+            if required[objectId] ~= nil or required[tostring(objectId)] ~= nil then
+                return true
+            end
+            for _, v in pairs(required) do
+                if type(v) == "table" then
+                    for _, id in pairs(v) do
+                        local idn = tonumber(id) or id
+                        if idn == objectId or tostring(idn) == tostring(objectId) then
+                            return true
+                        end
+                    end
+                end
+            end
+            return false
+        end
+
+        local function HandleOpenedObjectEvent()
+            if not addon or addon.Disabled then return end
+            if not (addon.GetProgress and addon.SetProgress) then return end
+
+            -- Prefer loot source APIs: we only count an interaction when a loot window opens.
+            local objectId = nil
+            if type(GetLootSourceInfo) == "function" and type(GetNumLootItems) == "function" then
+                local n = GetNumLootItems() or 0
+                for slot = 1, n do
+                    local ok, guid = pcall(GetLootSourceInfo, slot)
+                    if ok and guid then
+                        objectId = getGameObjectIdFromGUID(guid)
+                        if objectId then break end
+                    end
+                end
+            end
+            if not objectId then
+                -- Some branches expose C_Loot; keep a best-effort fallback without hard dependency.
+                local cl = _G.C_Loot
+                if cl and type(cl.GetLootSourceInfo) == "function" and type(cl.GetNumLootItems) == "function" then
+                    local n = cl.GetNumLootItems() or 0
+                    for slot = 1, n do
+                        local ok, guid = pcall(cl.GetLootSourceInfo, slot)
+                        if ok and guid then
+                            objectId = getGameObjectIdFromGUID(guid)
+                            if objectId then break end
+                        end
+                    end
+                end
+            end
+            if not objectId then return end
+
+            for _, row in ipairs(addon.AchievementRowModel or {}) do
+                if row and not IsAchievementAlreadyCompleted(row) then
+                    local def = row._def
+                    local requiredOpenObject = def and def.requiredOpenObject
+                    if requiredOpenObject and RequiredObjectListContains(requiredOpenObject, objectId) then
+                        local id = row.id or row.achId
+                        if id then
+                            local p = addon.GetProgress(id) or {}
+                            local opened = type(p.openedObjects) == "table" and p.openedObjects or {}
+                            if not opened[objectId] then
+                                opened[objectId] = true
+                                addon.SetProgress(id, "openedObjects", opened)
+                            end
+                        end
+                    end
+                end
+            end
         end
 
         -- requiredTarget-style helper: supports { [npcId]=1 } and { [slot]={id1,id2,...} }.
@@ -4361,11 +4492,7 @@ do
 
             local anyAwarded = false
             for _, row in ipairs(rowsWithTracker) do
-                if row.killTracker(destGUID) then
-                    MarkRowCompleted(row)
-                    local iconTex = (row.frame and row.frame.Icon and row.frame.Icon.GetTexture and row.frame.Icon:GetTexture()) or row.icon or 136116
-                    local titleText = (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or row.title or "Achievement"
-                    CreateAchToast(iconTex, titleText, row.points, row.frame or row)
+                if row.killTracker(destGUID) and MarkRowCompletedWithToast(row) then
                     anyAwarded = true
                 end
             end
@@ -4414,6 +4541,7 @@ do
         achEvt:RegisterEvent("QUEST_FINISHED")
         achEvt:RegisterEvent("PLAYER_LEVEL_CHANGED")
         achEvt:RegisterEvent("CHAT_MSG_LOOT")
+        achEvt:RegisterEvent("LOOT_OPENED")
         achEvt:RegisterEvent("PLAYER_DEAD")
         achEvt:RegisterEvent("PLAYER_REGEN_ENABLED")
         achEvt:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -4439,10 +4567,7 @@ do
                             local shouldComplete = row.processBossKillByEncounterID(encounterID)
                             -- If the function indicates completion, mark the achievement as complete
                             if shouldComplete then
-                                MarkRowCompleted(row)
-                                local iconTex = (row.frame and row.frame.Icon and row.frame.Icon.GetTexture and row.frame.Icon:GetTexture()) or row.icon or 136116
-                                local titleText = (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or row.title or "Achievement"
-                                CreateAchToast(iconTex, titleText, row.points, row.frame or row)
+                                MarkRowCompletedWithToast(row)
                             end
                         end
                     end
@@ -4777,10 +4902,7 @@ do
                                 end
                             end
                             
-                            MarkRowCompleted(row)
-                            local iconTex = (row.frame and row.frame.Icon and row.frame.Icon.GetTexture and row.frame.Icon:GetTexture()) or row.icon or 136116
-                            local titleText = (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or row.title or "Achievement"
-                            CreateAchToast(iconTex, titleText, row.points, row.frame or row)
+                            MarkRowCompletedWithToast(row)
                         end
                     end
                 end
@@ -4798,10 +4920,7 @@ do
                         -- Evaluate tracker and require true return value
                         local ok, shouldComplete = pcall(row.spellTracker, tonumber(spellId), tostring(targetName or ""))
                         if ok and shouldComplete == true then
-                            MarkRowCompleted(row)
-                            local iconTex = (row.frame and row.frame.Icon and row.frame.Icon.GetTexture and row.frame.Icon:GetTexture()) or row.icon or 136116
-                            local titleText = (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or row.title or "Achievement"
-                            CreateAchToast(iconTex, titleText, row.points, row.frame or row)
+                            MarkRowCompletedWithToast(row)
                         end
                     end
                 end
@@ -4813,10 +4932,7 @@ do
                     if not IsAchievementAlreadyCompleted(row) and type(row.auraTracker) == "function" then
                         local ok, shouldComplete = pcall(row.auraTracker)
                         if ok and shouldComplete == true then
-                            MarkRowCompleted(row)
-                            local iconTex = (row.frame and row.frame.Icon and row.frame.Icon.GetTexture and row.frame.Icon:GetTexture()) or row.icon or 136116
-                            local titleText = (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or row.title or "Achievement"
-                            CreateAchToast(iconTex, titleText, row.points, row.frame or row)
+                            MarkRowCompletedWithToast(row)
                             break -- Achievement completed, no need to check others
                         end
                     end
@@ -4833,10 +4949,7 @@ do
                         for _, row in ipairs(addon.AchievementRowModel or {}) do
                             -- Check both row.completed and database to prevent re-completion
                             if not IsAchievementAlreadyCompleted(row) and (row.id == "DefiasMask" or row.achId == "DefiasMask") then
-                                MarkRowCompleted(row)
-                                local iconTex = (row.frame and row.frame.Icon and row.frame.Icon.GetTexture and row.frame.Icon:GetTexture()) or row.icon or 136116
-                                local titleText = (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or row.title or "Achievement"
-                                CreateAchToast(iconTex, titleText, row.points, row.frame or row)
+                                MarkRowCompletedWithToast(row)
                             end
                         end
                     end
@@ -4857,10 +4970,7 @@ do
                                 -- when ALL items are owned, so it's safe to call on every inventory change
                                 local ok, shouldComplete = pcall(trackerFn)
                                 if ok and shouldComplete == true then
-                                    MarkRowCompleted(row)
-                                    local iconTex = (row.frame and row.frame.Icon and row.frame.Icon.GetTexture and row.frame.Icon:GetTexture()) or row.icon or 136116
-                                    local titleText = (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or row.title or "Achievement"
-                                    CreateAchToast(iconTex, titleText, row.points, row.frame or row)
+                                    MarkRowCompletedWithToast(row)
                                 end
                             end
                         end
@@ -4918,15 +5028,11 @@ do
                             local id = row and (row.id or row.achId)
                             -- Check both row.completed and database to prevent re-completion
                             if row and not IsAchievementAlreadyCompleted(row) and id == "Precious" then
-                                MarkRowCompleted(row)
-                                local iconTex = (row.frame and row.frame.Icon and row.frame.Icon.GetTexture and row.frame.Icon:GetTexture()) or row.icon or 136116
-                                local titleText = (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or row.title or "Achievement"
-                                CreateAchToast(iconTex, titleText, row.points, row.frame or row)
-                                
-                                -- Send SAY channel message to notify nearby players for Fellowship achievement
-                                local SendPreciousCompletionMessage = (addon and addon.SendPreciousCompletionMessage)
-                                if SendPreciousCompletionMessage then
-                                    SendPreciousCompletionMessage()
+                                if MarkRowCompletedWithToast(row) then
+                                    local SendPreciousCompletionMessage = (addon and addon.SendPreciousCompletionMessage)
+                                    if SendPreciousCompletionMessage then
+                                        SendPreciousCompletionMessage()
+                                    end
                                 end
                                 break
                             end
@@ -4940,10 +5046,7 @@ do
                     if not IsAchievementAlreadyCompleted(row) and type(row.itemTracker) == "function" then
                         local ok, shouldComplete = pcall(row.itemTracker)
                         if ok and shouldComplete == true then
-                            MarkRowCompleted(row)
-                            local iconTex = (row.frame and row.frame.Icon and row.frame.Icon.GetTexture and row.frame.Icon:GetTexture()) or row.icon or 136116
-                            local titleText = (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or row.title or "Achievement"
-                            CreateAchToast(iconTex, titleText, row.points, row.frame or row)
+                            MarkRowCompletedWithToast(row)
                             break -- Achievement completed, no need to check others
                         end
                     end
@@ -4956,10 +5059,7 @@ do
                     if not IsAchievementAlreadyCompleted(row) and type(row.chatTracker) == "function" then
                         local ok, shouldComplete = pcall(row.chatTracker, tostring(msg or ""))
                         if ok and shouldComplete == true then
-                            MarkRowCompleted(row)
-                            local iconTex = (row.frame and row.frame.Icon and row.frame.Icon.GetTexture and row.frame.Icon:GetTexture()) or row.icon or 136116
-                            local titleText = (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or row.title or "Achievement"
-                            CreateAchToast(iconTex, titleText, row.points, row.frame or row)
+                            MarkRowCompletedWithToast(row)
                         end
                     end
                 end
@@ -4977,11 +5077,9 @@ do
                         if row and (not row.completed) and id == "MessageToKarazhan" then
                             -- Check if the zone is fully discovered and speaking to the correct NPC
                             if addon and addon.CheckZoneDiscovery and addon.CheckZoneDiscovery(1430) then
-                                MarkRowCompleted(row)
-                                local iconTex = (row.frame and row.frame.Icon and row.frame.Icon.GetTexture and row.frame.Icon:GetTexture()) or row.icon or 136116
-                                local titleText = (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or row.title or "Achievement"
-                                CreateAchToast(iconTex, titleText, row.points, row.frame or row)
-                                break
+                                if MarkRowCompletedWithToast(row) then
+                                    break
+                                end
                             end
                         end
                     end
@@ -5008,6 +5106,8 @@ do
                 
                 EvaluateCustomCompletions(newLevel)
                 RefreshOutleveledAll()
+            elseif event == "LOOT_OPENED" then
+                HandleOpenedObjectEvent()
             elseif event == "CHAT_MSG_LOOT" then
                 local msg, _, _, _, playerName = ...
                 if playerName == GetUnitName("player") then
@@ -5021,10 +5121,7 @@ do
                     for _, row in ipairs(addon.AchievementRowModel or {}) do
                         -- Check both row.completed and database to prevent re-completion
                         if not IsAchievementAlreadyCompleted(row) and row.id == "Secret99" then
-                            MarkRowCompleted(row)
-                            local iconTex = (row.frame and row.frame.Icon and row.frame.Icon.GetTexture and row.frame.Icon:GetTexture()) or row.icon or 136116
-                            local titleText = (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or row.title or "Achievement"
-                            CreateAchToast(iconTex, titleText, row.points, row.frame or row)
+                            MarkRowCompletedWithToast(row)
                         end
                     end
                 end
@@ -5040,10 +5137,7 @@ do
                                 -- The tracker function checks if the player is exalted with the faction
                                 local ok, shouldComplete = pcall(trackerFn)
                                 if ok and shouldComplete == true then
-                                    MarkRowCompleted(row)
-                                local iconTex = (row.frame and row.frame.Icon and row.frame.Icon.GetTexture and row.frame.Icon:GetTexture()) or row.icon or 136116
-                                local titleText = (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or row.title or "Achievement"
-                                CreateAchToast(iconTex, titleText, row.points, row.frame or row)
+                                    MarkRowCompletedWithToast(row)
                                 end
                             end
                         end
@@ -5094,17 +5188,11 @@ do
                 for _, row in ipairs(addon.AchievementRowModel or {}) do
                     if not row.completed and row.id == "OrgA" and playerFaction == FACTION_ALLIANCE then
                         if addon and addon.CheckZoneDiscovery and addon.CheckZoneDiscovery(1411) then
-                            MarkRowCompleted(row)
-                            local iconTex = (row.frame and row.frame.Icon and row.frame.Icon.GetTexture and row.frame.Icon:GetTexture()) or row.icon or 136116
-                            local titleText = (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or row.title or "Achievement"
-                            CreateAchToast(iconTex, titleText, row.points, row.frame or row)
+                            MarkRowCompletedWithToast(row)
                         end
                     elseif not row.completed and row.id == "StormH" and playerFaction == FACTION_HORDE then
                         if addon and addon.CheckZoneDiscovery and addon.CheckZoneDiscovery(1429) then
-                            MarkRowCompleted(row)
-                            local iconTex = (row.frame and row.frame.Icon and row.frame.Icon.GetTexture and row.frame.Icon:GetTexture()) or row.icon or 136116
-                            local titleText = (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or row.title or "Achievement"
-                            CreateAchToast(iconTex, titleText, row.points, row.frame or row)
+                            MarkRowCompletedWithToast(row)
                         end
                     end
                 end
@@ -5112,11 +5200,9 @@ do
                 for _, row in ipairs(addon.AchievementRowModel or {}) do
                     -- Check both row.completed and database to prevent re-completion
                     if not IsAchievementAlreadyCompleted(row) and (row.id == "Secret4" or row.id == "Secret004" or row.achId == "Secret4" or row.achId == "Secret004") then
-                        MarkRowCompleted(row)
-                        local iconTex = (row.frame and row.frame.Icon and row.frame.Icon.GetTexture and row.frame.Icon:GetTexture()) or row.icon or 136116
-                        local titleText = (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or row.title or "Achievement"
-                        CreateAchToast(iconTex, titleText, row.points, row.frame or row)
-                        break
+                        if MarkRowCompletedWithToast(row) then
+                            break
+                        end
                     end
                 end
             end
@@ -5145,10 +5231,7 @@ do
                     if not IsAchievementAlreadyCompleted(row) and type(row.emoteTracker) == "function" then
                         local ok, shouldComplete = pcall(row.emoteTracker, tostring(token or ""), tostring(targetName or ""), tostring(unit or ""))
                         if ok and shouldComplete == true then
-                            MarkRowCompleted(row)
-                            local iconTex = (row.frame and row.frame.Icon and row.frame.Icon.GetTexture and row.frame.Icon:GetTexture()) or row.icon or 136116
-                            local titleText = (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or row.title or "Achievement"
-                            CreateAchToast(iconTex, titleText, row.points, row.frame or row)
+                            MarkRowCompletedWithToast(row)
                         end
                     end
                 end

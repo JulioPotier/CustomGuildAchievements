@@ -574,14 +574,14 @@ local function CreateOptionsPanel()
     -- Create title
     local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", 16, -16)
-    title:SetText("Hardcore Achievements")
+    title:SetText("Custom Guild Achievements")
     --title:SetFont("Interface\\Addons\\MyAddon\\Fonts\\MyCustomFont.ttf", 20)
     title:SetTextColor(1, 1, 1, 1)
     
     -- Create subtitle/description
     local subtitle = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
-    subtitle:SetText("Configure settings for the Hardcore Achievements addon")
+    subtitle:SetText("Configure settings for the Custom Guild Achievements addon")
     subtitle:SetTextColor(0.7, 0.7, 0.7, 1)
 
     panel.divider = panel:CreateTexture(nil, "ARTWORK")
