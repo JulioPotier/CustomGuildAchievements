@@ -58,6 +58,33 @@ local fadeTickerDirection = nil  -- true = fade in, false = fade out
 local fadeTickerValue = 0  -- Current fade value (0 to 0.3)
 local hoveredLine = nil  -- Track which achievement line is currently hovered
 local HOVER_ALPHA = 0.6  -- Alpha for non-hovered lines when mouse is over tracker
+local attemptTicker = nil -- 1s ticker for attempt timer refresh
+
+local function FormatSecondsMMSS(seconds)
+    seconds = tonumber(seconds) or 0
+    if seconds < 0 then seconds = 0 end
+    seconds = math.floor(seconds)
+    local m = math.floor(seconds / 60)
+    local s = seconds % 60
+    return string_format("%02d:%02d", m, s)
+end
+
+local function EnsureAttemptTicker(enabled)
+    if enabled then
+        if not attemptTicker then
+            attemptTicker = C_Timer.NewTicker(1, function()
+                if AchievementTracker and AchievementTracker.Update then
+                    AchievementTracker:Update()
+                end
+            end)
+        end
+    else
+        if attemptTicker then
+            attemptTicker:Cancel()
+            attemptTicker = nil
+        end
+    end
+end
 
 -- Fade ticker system (matching Questie's approach) - module level so accessible from Initialize and Update
 local function StartFadeTicker()
@@ -345,6 +372,57 @@ local function RestoreTrackedAchievements()
     -- Show the tracker if there are tracked achievements (auto-show on login)
     if next(trackedAchievements) ~= nil then
         AchievementTracker:Show()
+    end
+end
+
+-- Remove tracked IDs that no longer exist in the catalog/defs.
+-- Run once after registrations complete, so we don't persist stale IDs forever.
+local didPruneMissingOnce = false
+local function PruneMissingTrackedAchievementsOnce()
+    if didPruneMissingOnce then
+        return
+    end
+    didPruneMissingOnce = true
+
+    if not isInitialized then
+        return
+    end
+    if not next(trackedAchievements) then
+        return
+    end
+
+    local defs = addon and addon.AchievementDefs or nil
+    local rows = addon and addon.AchievementRowModel or nil
+    local valid = {}
+    if type(defs) == "table" then
+        for k in pairs(defs) do
+            valid[tostring(k)] = true
+        end
+    end
+    if type(rows) == "table" then
+        for _, r in ipairs(rows) do
+            local id = r and (r.id or r.achId)
+            if id ~= nil then
+                valid[tostring(id)] = true
+            end
+        end
+    end
+
+    if not next(valid) then
+        return
+    end
+
+    local removed = false
+    for achId in pairs(trackedAchievements) do
+        if not valid[tostring(achId)] then
+            trackedAchievements[achId] = nil
+            removed = true
+        end
+    end
+
+    if removed then
+        SaveTrackedAchievements()
+        AchievementTracker:Update()
     end
 end
 
@@ -1715,6 +1793,7 @@ local function Update(self)
         end)
 
         -- Display each tracked achievement in sorted order
+        local anyActiveAttemptTimer = false
         for _, achievementEntry in ipairs(sortedAchievements) do
             local achievementId = achievementEntry.id
             local data = achievementEntry.data
@@ -1757,13 +1836,53 @@ local function Update(self)
                 
                 -- Get achievement status (Completed, Failed, Pending Turn-In)
                 local statusText, statusColor = GetAchievementStatus(achievementId)
+
+                -- Attempt timer (opt-in): show remaining time and auto-fail at 0.
+                do
+                    local row = addon and addon.GetAchievementRow and addon.GetAchievementRow(achievementId)
+                    local def = (row and row._def) or (addon and addon.AchievementDefs and addon.AchievementDefs[tostring(achievementId)]) or nil
+                    local isCompleted = false
+                    if row and row.completed == true then
+                        isCompleted = true
+                    elseif addon and addon.GetCharDB then
+                        local _, cdb = addon.GetCharDB()
+                        local rec = cdb and cdb.achievements and cdb.achievements[tostring(achievementId)]
+                        if rec and rec.completed == true then
+                            isCompleted = true
+                        end
+                    end
+
+                    if (not isCompleted) and def and def.attemptEnabled and addon and addon.GetProgress and addon.AttemptFail then
+                        local p = addon.GetProgress(achievementId) or {}
+                        local a = p and p.attempt
+                        local isActive = type(a) == "table" and a.active == true
+                        if not isActive then
+                            statusText = (statusText or "") .. " |cffff8800[not started]|r"
+                        else
+                            local timerSet = tonumber(a.timerSet) or tonumber(def.timerSet) or nil
+                            local startedAt = tonumber(a.startedAt) or nil
+                            if timerSet and timerSet > 0 and startedAt then
+                                local remaining = timerSet - (time() - startedAt)
+                                if remaining <= 0 then
+                                    addon.AttemptFail(achievementId, "timer", time())
+                                else
+                                    anyActiveAttemptTimer = true
+                                    local remText = FormatSecondsMMSS(remaining)
+                                    statusText = (statusText or "") .. " |cff00ff00(" .. remText .. ")|r"
+                                end
+                            else
+                                statusText = (statusText or "") .. " |cff00ff00[active]|r"
+                            end
+                        end
+                    end
+                end
                 
                 -- Set title with color coding based on player level vs required level
                 -- Apply title color to base title, then append status text with its own color
                 local titleColor = GetTitleColor(achievementLevel)
                 local displayTitle = "|c" .. titleColor .. baseTitle .. "|r"
                 if statusText then
-                    displayTitle = displayTitle .. statusColor .. statusText .. "|r"
+                    displayTitle = displayTitle .. (statusColor or "") .. statusText .. "|r"
                 end
                 
                 line.label:SetText(displayTitle)
@@ -1889,8 +2008,12 @@ local function Update(self)
         else
             trackerContentFrame:SetHeight(50)
         end
+
+        -- Only run a 1s refresh loop while at least one tracked achievement has an active attempt timer.
+        EnsureAttemptTicker(anyActiveAttemptTimer)
     else
         trackerContentFrame:Hide()
+        EnsureAttemptTicker(false)
         -- Hide all lines
         for _, line in ipairs(achievementLines) do
             if line then
@@ -2364,6 +2487,8 @@ local function RestoreOnLogin()
         end
         -- Restore tracked achievements (this will also show the tracker if there are tracked achievements)
         RestoreTrackedAchievements()
+        -- Prune any tracked IDs that no longer exist after the catalog finished loading.
+        PruneMissingTrackedAchievementsOnce()
     end
 end
 

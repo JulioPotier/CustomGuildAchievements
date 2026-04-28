@@ -224,7 +224,7 @@ local function GetClassIcon()
         ["Hunter"] = "Interface\\AddOns\\CustomGuildAchievements\\Images\\Class_HUNTER.png",
         ["Rogue"] = "Interface\\AddOns\\CustomGuildAchievements\\Images\\Class_ROGUE.png",
         ["Priest"] = "Interface\\AddOns\\CustomGuildAchievements\\Images\\Class_PRIEST.png",
-        --["Shaman"] = "Interface\\AddOns\\CustomGuildAchievements\\Images\\Class_SHAMAN.png",
+        ["Shaman"] = "Interface\\AddOns\\CustomGuildAchievements\\Images\\Class_SHAMAN.png",
         ["Mage"] = "Interface\\AddOns\\CustomGuildAchievements\\Images\\Class_MAGE.png",
         ["Warlock"] = "Interface\\AddOns\\CustomGuildAchievements\\Images\\Class_WARLOCK.png",
         ["Druid"] = "Interface\\AddOns\\CustomGuildAchievements\\Images\\Class_DRUID.png",
@@ -384,8 +384,29 @@ local function RegisterAchievementDef(def, overrides)
         icon = def.icon,
         points = def.points or 0,
         level = def.level,
+        -- Attempt / opt-in run state (transport only; logic elsewhere)
+        attemptEnabled = def.attemptEnabled,
+        timerSet = def.timerSet,
+        failOnMount = def.failOnMount,
+        failOnDruidCatForm = def.failOnDruidCatForm,
+        failOnDruidTravelForm = def.failOnDruidTravelForm,
+        failOnHunterAspect = def.failOnHunterAspect,
+        failOnShamanGhostWolf = def.failOnShamanGhostWolf,
+        walkOnly = def.walkOnly,
+        startNpc = def.startNpc,
+        startNpcId = def.startNpcId,
+        startObjectId = def.startObjectId,
+        attemptsAllowed = def.attemptsAllowed,
+        -- Optional single-metric data display
+        dataLabel = def.dataLabel,
+        dataFormat = def.dataFormat,
+        dataMode = def.dataMode,
         -- Quest-specific fields
         targetNpcId = def.targetNpcId,
+        -- Emote trigger (opt-in): requires targeting targetNpcId and performing the emote (e.g. "wave")
+        onEmote = def.onEmote,
+        -- Optional proximity gate (opt-in): require CheckInteractDistance("target", 2) at trigger time.
+        checkInteractDistance = def.checkInteractDistance,
         requiredKills = def.requiredKills,
         requiredTarget = def.requiredTarget,
         requiredTalkTo = def.requiredTalkTo,

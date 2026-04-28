@@ -5,7 +5,8 @@ local addonName, addon = ...
 local table_insert = table.insert
 local guildName = "|cffffd100" .. (GetGuildInfo("player") or (_G.CGA_GUILD_NAME or "No Guild")) .. "|r"
 local classColor = (addon and addon.GetClassColor and addon.GetClassColor()) or "|cffffd100"
-local playerName = classColor .. UnitName("player") .. "|r"
+local rawPlayerName = UnitName("player")
+local playerName = classColor .. rawPlayerName .. "|r"
 local playerClass = classColor .. UnitClass("player") .. "|r"
 local GuildAchievements
 
@@ -62,7 +63,7 @@ GuildAchievements = {
       return false
     end,
   },
-  -- // KINGS
+  -- // target some npc
   {
     achId = ACH_MEET_KINGS,
     title = "Meet them all.",
@@ -83,7 +84,7 @@ GuildAchievements = {
       return need > 0 and got >= need
     end,
   },
-  -- // TALK TO KATRANA (TEST)
+  -- // TALK TO someone
   {
     achId = "GUILD-TALK-KATRANA-1749",
     title = "An audience with Lady Prestor",
@@ -95,7 +96,79 @@ GuildAchievements = {
       [1749] = "Lady Katrana Prestor",
     },
   },
-  -- // Target Anduin Wrynn
+  -- // Attempt: gossip with Lady Prestor (1749) starts the run; speak with Anduin (1747) before timer ends
+  --[[
+  {
+    achId = "GUILD-ATTEMPT-ROYAL-RUSH-TEST7",
+    title = "Royal rush",
+    tooltip = "Open gossip with Lady Katrana Prestor in Stormwind Keep to start your run, then speak with Anduin Wrynn before the timer expires.",
+    icon = 135981,
+    points = 10,
+    level = 60,
+    attemptEnabled = true,
+    startNpc = {
+      npcId = 1749,
+      text = "\nRoyal rush\n\nHello " .. rawPlayerName .. "! You will have to find your way to the Stormwind Keep and speak with Anduin Wrynn to win this achievement.\n\nTry your best at Adventure Co.",
+      buttonLabel = "Accept quest",
+      
+      -- onClick = function(cfg, npcId, def)
+      --   if addon and addon.AttemptActivate then
+      --     addon.AttemptActivate(cfg.achId, "npc:" .. tostring(npcId), nil)
+      --   end
+      -- end,
+    },
+    timerSet = 300,
+    zone = "5 min",
+    requiredTarget = {
+      [1747] = "Anduin Wrynn",
+    },
+  },--]]
+  -- // Attempt: loot a Water Barrel (3658) starts each try; up to 3 runs; speak with Magni in Ironforge
+  {
+    achId = "GUILD-ATTEMPT-BARREL-MAGNI-3",
+    title = "Barrel relay (3 tries)",
+    tooltip = "Open a Water Barrel (object 3658) to start a run — you have three starts total. Reach Ironforge and speak with King Magni Bronzebeard before the timer runs out. Each new barrel open begins another try if you are not already in a run.",
+    icon = 132797,
+    points = 15,
+    level = 60,
+    attemptEnabled = true,
+    -- Single-metric run stat (best time). Implementation stores/prints later; this declares the intent.
+    dataLabel = "Best time",
+    dataFormat = "time",
+    dataMode = "min",
+    attemptsAllowed = 3,
+    startObjectId = 3658,
+    timerSet = 1200,
+    requiredTalkTo = {
+      [2784] = "King Magni Bronzebeard",
+    },
+  },
+  -- // Attempt: no mount / druid forms / hunter aspects / ghost wolf when flags are set (each optional)
+  {
+    achId = "GUILD-ATTEMPT-NEVER-FAST",
+    title = "The Saddle Is Lava",
+    tooltip = "Talk to any Stormwind Guard to start your vow. Then head to King Magni Bronzebeard in Ironforge without shortcut movement.\n\nWhile the attempt is active: you must stay in walk (no run toggle). Mounting, Cat Form, Travel Form, hunter Cheetah/Pack aspects, or Ghost Wolf fail the achievement (each controlled by its own flag). Potions, gear and passive talents do not.",
+    icon = 132261,
+    points = 10,
+    level = 60,
+    attemptEnabled = true,
+    failOnMount = true,
+    failOnDruidCatForm = true,
+    failOnDruidTravelForm = true,
+    failOnHunterAspect = true,
+    failOnShamanGhostWolf = true,
+    walkOnly = true,
+    startNpc = {
+      npcId = 68,
+      text = "\nThe Saddle Is Lava\n\nSwear you will not mount, shapeshift for speed, use hunter running aspects, or Ghost Wolf — only foot travel allowed for this challenge.\n\nNow go see King Magni Bronzebeard in Ironforge.",
+      buttonLabel = "I swear (strict travel)",
+    },
+    timerSet = 900,
+    requiredTalkTo = {
+      [2784] = "King Magni Bronzebeard",
+    },
+  },
+  -- // Target secret
   {
     achId = "GUILD-TARGET-ANDUIN-1747",
     title = "Talk to someone important",
@@ -110,7 +183,7 @@ GuildAchievements = {
     trackTargetOnChange = true,
     secretTracker = true,
   },  
-  -- // OPEN WATER BARREL (TEST)
+  -- // OPEN object
   {
     achId = "GUILD-OPEN-WATER-BARREL-3658",
     title = "A sip of water",
@@ -122,6 +195,7 @@ GuildAchievements = {
       [3658] = 1, -- Water Barrel
     },
   },
+  -- // Accurate zone kill count
   {
     achId = "Murloc in Duskwood",
     title = "Murloc in Duskwood",
@@ -132,6 +206,18 @@ GuildAchievements = {
     zone = "Duskwood",
     -- UiMapID (locale-neutral); kill counts only in this zone tree. Verify in-game: /run print(C_Map.GetBestMapForUnit("player"))
     zoneAccurate = 1431,
+  },
+  -- // Emote trigger: target an NPC and /wave
+  {
+    achId = "GUILD-EMOTE-WAVE-46",
+    title = "Say hello to the Stormwind Guard",
+    level = nil,
+    tooltip = "Target a Stormwind Guard and perform a /wave.",
+    icon = 135993,
+    points = 5,
+    targetNpcId = 68,
+    onEmote = "wave",
+    checkInteractDistance = true,
   },
 }
 
@@ -150,7 +236,7 @@ if addon then
     if def.customKill then
       return def.customKill
     end
-    if (def.targetNpcId or def.requiredKills) and addon.GetAchievementFunction then
+    if (not def.onEmote) and (def.targetNpcId or def.requiredKills) and addon.GetAchievementFunction then
       return addon.GetAchievementFunction(def.achId, "Kill")
     end
     return nil
@@ -166,7 +252,7 @@ if addon then
   for _, def in ipairs(GuildAchievements) do
     def.isGuild = true
     table_insert(queue, function()
-      if not def.customKill and (def.targetNpcId or def.requiredKills or def.requiredQuestId) and addon.registerQuestAchievement then
+      if (not def.onEmote) and (not def.customKill) and (def.targetNpcId or def.requiredKills or def.requiredQuestId) and addon.registerQuestAchievement then
         addon.registerQuestAchievement{
           achId = def.achId,
           requiredQuestId = def.requiredQuestId,

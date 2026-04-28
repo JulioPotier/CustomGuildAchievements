@@ -5,6 +5,13 @@ local UnitClass = UnitClass
 local UnitGUID = UnitGUID
 local UnitName = UnitName
 local UnitExists = UnitExists
+local UnitBuff = UnitBuff
+local IsPlayerMoving = IsPlayerMoving
+local IsFalling = IsFalling
+local IsSwimming = IsSwimming
+local GetUnitSpeed = GetUnitSpeed
+local GetUnitMovementFlags = rawget(_G, "GetUnitMovementFlags")
+local bit_band = bit and bit.band
 local UnitFactionGroup = UnitFactionGroup
 local UnitAffectingCombat = UnitAffectingCombat
 local GetTime = GetTime
@@ -477,6 +484,16 @@ local function IsRowOutleveled(row)
         local _, cdb = GetCharDB()
         if cdb and cdb.achievements and cdb.achievements[achId] and cdb.achievements[achId].completed then
             return false -- Achievement is completed in database, never mark as failed
+        end
+
+        -- Attempt-enabled achievements can fail due to explicit rules (mount/shapeshift/aspect/etc., timer expiry).
+        -- Those failures are persisted in DB as `rec.failed` and should always be treated as failed,
+        -- regardless of maxLevel.
+        if cdb and cdb.achievements then
+            local rec = cdb.achievements[tostring(achId)]
+            if rec and rec.failed == true and row._def and row._def.attemptEnabled == true then
+                return true
+            end
         end
         
         -- Level milestone achievements (Level10, Level20, etc.) should never be marked as failed
@@ -1473,7 +1490,8 @@ local function CheckPendingCompletions()
                         end
                     end
                     if requiredCount > 0 and satisfied >= requiredCount then
-                        if MarkRowCompletedWithToast(row) then
+                        local attemptOk = not def.attemptEnabled or (addon.AttemptIsActive and addon.AttemptIsActive(id))
+                        if attemptOk and MarkRowCompletedWithToast(row) then
                             completedThisRow = true
                         end
                     end
@@ -1513,7 +1531,73 @@ local function CheckPendingCompletions()
                         end
                     end
                     if requiredCount > 0 and satisfied >= requiredCount then
-                        if MarkRowCompletedWithToast(row) then
+                        local attemptOk = not def.attemptEnabled or (addon.AttemptIsActive and addon.AttemptIsActive(id))
+                        if attemptOk and MarkRowCompletedWithToast(row) then
+                            completedThisRow = true
+                        end
+                    end
+                end
+            end
+
+            -- Completion type: requiredTarget (target discovery saved in progress.metTargets/metKings)
+            if (not completedThisRow) and def and type(def.requiredTarget) == "table" and addon and addon.GetProgress then
+                local id = row.id or row.achId
+                if id then
+                    local p = addon.GetProgress(id) or {}
+                    -- Merge both tables: either may be used by older/newer defs (metKings legacy).
+                    local met = nil
+                    if p then
+                        if type(p.metTargets) == "table" or type(p.metKings) == "table" then
+                            met = {}
+                            if type(p.metTargets) == "table" then
+                                for k, v in pairs(p.metTargets) do
+                                    if v then
+                                        met[k] = true
+                                        local kn = tonumber(k)
+                                        if kn then met[kn] = true end
+                                    end
+                                end
+                            end
+                            if type(p.metKings) == "table" then
+                                for k, v in pairs(p.metKings) do
+                                    if v then
+                                        met[k] = true
+                                        local kn = tonumber(k)
+                                        if kn then met[kn] = true end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    local required = def.requiredTarget
+                    local satisfied = 0
+                    local requiredCount = 0
+                    if type(required) == "table" then
+                        for npcId, need in pairs(required) do
+                            requiredCount = requiredCount + 1
+                            local done = false
+                            if type(need) == "table" then
+                                for _, anyId in pairs(need) do
+                                    local anyNum = tonumber(anyId) or anyId
+                                    if met and (met[anyNum] or met[tostring(anyNum)] or met[anyId]) then
+                                        done = true
+                                        break
+                                    end
+                                end
+                            else
+                                local n = tonumber(npcId) or npcId
+                                if met and (met[n] or met[tostring(n)] or met[npcId]) then
+                                    done = true
+                                end
+                            end
+                            if done then
+                                satisfied = satisfied + 1
+                            end
+                        end
+                    end
+                    if requiredCount > 0 and satisfied >= requiredCount then
+                        local attemptOk = not def.attemptEnabled or (addon.AttemptIsActive and addon.AttemptIsActive(id))
+                        if attemptOk and MarkRowCompletedWithToast(row) then
                             completedThisRow = true
                         end
                     end
@@ -1942,13 +2026,41 @@ end
 
 -- Play completion toast only when MarkRowCompleted actually applied (avoids duplicate sound/UI).
 MarkRowCompletedWithToast = function(row)
-    if not MarkRowCompleted(row) then
-        return false
+    local newlyCompleted = MarkRowCompleted(row)
+
+    -- Repeatable achievements (mode B): allow re-triggering the toast even if already completed.
+    -- We intentionally keep the return value as "newlyCompleted" so callers can continue to use it
+    -- as "did we actually award completion/points?" while still showing the animation every success.
+    if not newlyCompleted then
+        local id = AchievementRowDbKey(row)
+        local def =
+            (row and row._def) or
+            (addon and addon.AchievementDefs and id and addon.AchievementDefs[tostring(id)]) or
+            nil
+        -- Repeatable rule: attemptsAllowed is mandatory; without it, force non-repeatable.
+        local attemptsAllowed = def and tonumber(def.attemptsAllowed) or nil
+        local wantsRepeatable = def and (def.repeatable == true or def.isRepeatable == true) or false
+        local isRepeatable = wantsRepeatable and attemptsAllowed and attemptsAllowed > 0 or false
+        if not isRepeatable then
+            return false
+        end
     end
+
+    -- Anti-double-trigger: at most one toast per achId per second.
+    addon._ToastLastAtByAchId = addon._ToastLastAtByAchId or {}
+    local id = AchievementRowDbKey(row) or tostring(row and (row.achId or row.id) or "")
+    local now = time and time() or 0
+    if id and addon._ToastLastAtByAchId[id] and (now - addon._ToastLastAtByAchId[id]) < 1 then
+        return newlyCompleted
+    end
+    if id then
+        addon._ToastLastAtByAchId[id] = now
+    end
+
     local iconTex = (row.frame and row.frame.Icon and row.frame.Icon.GetTexture and row.frame.Icon:GetTexture()) or row.icon or 136116
     local titleText = (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or row.title or "Achievement"
     CreateAchToast(iconTex, titleText, row.points or 0, row.frame or row)
-    return true
+    return newlyCompleted
 end
 
 -- Check if an achievement ID is a level milestone achievement (Level10, Level20, etc.)
@@ -2028,6 +2140,20 @@ end
 local function SetProgress(achId, key, value)
     local _, cdb = GetCharDB()
     if not cdb then return end
+
+    -- Opt-in attempt gating: if an achievement is attemptEnabled, do not record progress for
+    -- completion-relevant keys unless the attempt is active. This prevents "pre-doing" objectives
+    -- before starting the run (e.g. targeting/talking/killing), which would instantly complete on activation.
+    if addon and addon.AchievementDefs and key ~= "attempt" then
+        local def = addon.AchievementDefs[tostring(achId)]
+        if def and def.attemptEnabled then
+            local isActive = addon.AttemptIsActive and addon.AttemptIsActive(achId) or false
+            if not isActive and value ~= nil then
+                return
+            end
+        end
+    end
+
     cdb.progress = cdb.progress or {}
     local p = cdb.progress[achId] or {}
     p[key] = value
@@ -2055,12 +2181,288 @@ local function SetProgress(achId, key, value)
     end)
 end
 
+-- =========================================================
+-- Attempt Helpers (opt-in run state)
+-- =========================================================
+local function AttemptIsActive(achId)
+    if not achId then return false end
+    local p = GetProgress(achId)
+    local a = p and p.attempt
+    return type(a) == "table" and a.active == true
+end
+
+local function AttemptActivate(achId, startedBy, timerSetOverride)
+    if not achId then return false end
+
+    local _, cdb = GetCharDB()
+    if not cdb then return false end
+    cdb.progress = cdb.progress or {}
+
+    local p = cdb.progress[achId] or {}
+    local a = type(p.attempt) == "table" and p.attempt or {}
+
+    if a.active == true then
+        return false
+    end
+
+    local def = addon and addon.AchievementDefs and addon.AchievementDefs[tostring(achId)]
+    local maxRuns = def and tonumber(def.attemptsAllowed) or nil
+    if maxRuns and maxRuns > 0 then
+        local starts = tonumber(a.runsStarted) or 0
+        if starts >= maxRuns then
+            return false
+        end
+        a.runsStarted = starts + 1
+    end
+
+    local timerSet = timerSetOverride
+    if timerSet == nil and def and def.timerSet ~= nil then
+        timerSet = def.timerSet
+    end
+    timerSet = tonumber(timerSet) or nil
+
+    a.active = true
+    a.startedAt = time()
+    a.endAt = nil
+    a.startedBy = startedBy or "self"
+    a.timerSet = timerSet
+
+    addon.SetProgress(achId, "attempt", a)
+    local tracker = addon and addon.AchievementTracker
+    if tracker and type(tracker.Update) == "function" then
+        tracker:Update()
+    end
+    -- Fail immediately if already mounted / shifted / aspect when the attempt becomes active.
+    if addon and type(addon.ApplyAttemptTransportFailRules) == "function" then
+        addon.ApplyAttemptTransportFailRules()
+    end
+    -- walkOnly: fail if already running when activation finishes (after transport checks).
+    if addon and type(addon.ApplyAttemptWalkOnlyFailRules) == "function" then
+        addon.ApplyAttemptWalkOnlyFailRules()
+    end
+    return true
+end
+
+local function AttemptFail(achId, reason, endAt)
+    if not achId then return false end
+    endAt = endAt or time()
+
+    local _, cdb = GetCharDB()
+    if not cdb then return false end
+
+    -- Persist failure in achievements record (for sorting + UI state).
+    cdb.achievements = cdb.achievements or {}
+    local rec = cdb.achievements[achId]
+    if not rec then
+        rec = {}
+        cdb.achievements[achId] = rec
+    end
+
+    local def = addon and addon.AchievementDefs and addon.AchievementDefs[tostring(achId)]
+    local maxRuns = def and tonumber(def.attemptsAllowed) or nil
+
+    -- Persist attempt state in progress (endAt + deactivate).
+    cdb.progress = cdb.progress or {}
+    local p = cdb.progress[achId] or {}
+    local a = type(p.attempt) == "table" and p.attempt or {}
+    a.active = false
+    a.endAt = endAt
+    if a.startedAt == nil then
+        -- If we fail without an explicit activation, still stamp a start time.
+        a.startedAt = endAt
+    end
+    if a.startedBy == nil then
+        a.startedBy = "self"
+    end
+    addon.SetProgress(achId, "attempt", a)
+    local tracker = addon and addon.AchievementTracker
+    if tracker and type(tracker.Update) == "function" then
+        tracker:Update()
+    end
+
+    if rec.completed ~= true then
+        local starts = tonumber(a.runsStarted) or 0
+        local outOfRuns = maxRuns and maxRuns > 0 and starts >= maxRuns
+        if not maxRuns or maxRuns <= 0 then
+            rec.failed = true
+            rec.failedAt = rec.failedAt or endAt
+            rec.failReason = reason or rec.failReason
+        elseif outOfRuns then
+            rec.failed = true
+            rec.failedAt = rec.failedAt or endAt
+            rec.failReason = reason or rec.failReason
+        else
+            rec.failed = nil
+            rec.failedAt = nil
+            rec.failReason = nil
+        end
+    end
+
+    -- If the failure is terminal, remove it from the tracker list immediately.
+    do
+        local tracker2 = addon and addon.AchievementTracker
+        if rec and rec.failed == true and tracker2 and type(tracker2.UntrackAchievement) == "function" then
+            tracker2:UntrackAchievement(achId)
+        end
+    end
+
+    -- Multi-attempt: clear requiredTalkTo progress so the next run cannot auto-complete on stale flags.
+    if maxRuns and maxRuns > 0 and def and type(def.requiredTalkTo) == "table" and rec.failed ~= true then
+        local p2 = GetProgress(achId) or {}
+        local t = type(p2.talkedTo) == "table" and p2.talkedTo or {}
+        local cleared = {}
+        for k, v in pairs(t) do
+            cleared[k] = v
+        end
+        for npcKey, _ in pairs(def.requiredTalkTo) do
+            local nk = tonumber(npcKey) or npcKey
+            cleared[nk] = nil
+            cleared[tostring(nk)] = nil
+            cleared[npcKey] = nil
+        end
+        addon.SetProgress(achId, "talkedTo", cleared)
+    end
+
+    return true
+end
+
+local function AttemptCancel(achId)
+    if not achId then return false end
+    return AttemptFail(achId, "cancel", time())
+end
+
+-- Spell IDs for opt-in attempt "transport" rules (Classic Era): sustained class movement,
+-- excluding potions, gear/talent passive speed, etc. (those are intentionally not checked.)
+local CGA_SPELL_DRUID_CAT = 768 -- Cat Form (all ranks share buff id)
+local CGA_SPELL_DRUID_TRAVEL = 783 -- Travel Form
+local CGA_SPELL_HUNTER_CHEETAH = 5118 -- Aspect of the Cheetah
+local CGA_SPELL_HUNTER_PACK = 13159 -- Aspect of the Pack (group run speed)
+local CGA_SPELL_SHAMAN_GHOST_WOLF = 2645 -- Ghost Wolf
+
+local function ScanPlayerBuffSpellFlags()
+    local cat, travel, aspect, ghostWolf = false, false, false, false
+    for i = 1, 40 do
+        local name, _, _, _, _, _, _, _, _, spellId = UnitBuff("player", i)
+        if not name then break end
+        if spellId == CGA_SPELL_DRUID_CAT then
+            cat = true
+        elseif spellId == CGA_SPELL_DRUID_TRAVEL then
+            travel = true
+        elseif spellId == CGA_SPELL_HUNTER_CHEETAH or spellId == CGA_SPELL_HUNTER_PACK then
+            aspect = true
+        elseif spellId == CGA_SPELL_SHAMAN_GHOST_WOLF then
+            ghostWolf = true
+        end
+    end
+    return cat, travel, aspect, ghostWolf
+end
+
+local function ApplyAttemptTransportFailRules()
+    local mounted = IsMounted and IsMounted()
+    local cat, travel, aspect, ghostWolf = ScanPlayerBuffSpellFlags()
+    for _, row in ipairs(addon.AchievementRowModel or {}) do
+        local id = AchievementRowDbKey(row)
+        if id and not IsAchievementAlreadyCompleted(row) and AttemptIsActive(id) then
+            local def =
+                (row and row._def) or
+                (addon and addon.AchievementDefs and addon.AchievementDefs[tostring(id)]) or
+                nil
+            if def then
+                local reason = nil
+                if mounted and def.failOnMount == true then
+                    reason = "mount"
+                elseif cat and def.failOnDruidCatForm == true then
+                    reason = "druid_cat"
+                elseif travel and def.failOnDruidTravelForm == true then
+                    reason = "druid_travel"
+                elseif aspect and def.failOnHunterAspect == true then
+                    reason = "hunter_aspect"
+                elseif ghostWolf and def.failOnShamanGhostWolf == true then
+                    reason = "ghost_wolf"
+                end
+                if reason then
+                    AttemptFail(id, reason, time())
+                end
+            end
+        end
+    end
+end
+
+-- walkOnly: MaNGOS/TC-style gait flag when the client exposes GetUnitMovementFlags; else speed heuristic.
+local CGA_MOVEMENT_FLAG_WALK_GAIT = 0x100000
+-- Between stacked walk buffs (~3.5) and unbuffed run (~7); avoids most false positives with boots/talents while walking.
+local CGA_WALKONLY_SPEED_FALLBACK = 4.35
+
+local function PlayerViolatesWalkOnlyWhileMoving()
+    if IsMounted and IsMounted() then
+        return false
+    end
+    if not IsPlayerMoving() then
+        return false
+    end
+    if IsFalling and IsFalling() then
+        return false
+    end
+    if IsSwimming and IsSwimming() then
+        return false
+    end
+    if type(GetUnitMovementFlags) == "function" and bit_band then
+        local ok, flags = pcall(GetUnitMovementFlags, "player")
+        if ok and type(flags) == "number" then
+            return bit_band(flags, CGA_MOVEMENT_FLAG_WALK_GAIT) == 0
+        end
+    end
+    local s = GetUnitSpeed("player") or 0
+    return s > CGA_WALKONLY_SPEED_FALLBACK
+end
+
+local function ApplyAttemptWalkOnlyFailRules()
+    local rows = addon.AchievementRowModel
+    if not rows then return end
+    local need = false
+    for _, row in ipairs(rows) do
+        local id = AchievementRowDbKey(row)
+        if id and not IsAchievementAlreadyCompleted(row) and AttemptIsActive(id) then
+            local def =
+                (row and row._def) or
+                (addon and addon.AchievementDefs and addon.AchievementDefs[tostring(id)]) or
+                nil
+            if def and def.walkOnly == true then
+                need = true
+                break
+            end
+        end
+    end
+    if not need then return end
+    if not PlayerViolatesWalkOnlyWhileMoving() then
+        return
+    end
+    for _, row in ipairs(rows) do
+        local id = AchievementRowDbKey(row)
+        if id and not IsAchievementAlreadyCompleted(row) and AttemptIsActive(id) then
+            local def =
+                (row and row._def) or
+                (addon and addon.AchievementDefs and addon.AchievementDefs[tostring(id)]) or
+                nil
+            if def and def.walkOnly == true then
+                AttemptFail(id, "not_walking", time())
+            end
+        end
+    end
+end
+
 -- Export API on addon for achievement modules and other addon files
 if addon then
     addon.GetProgress = GetProgress
     addon.SetProgress = SetProgress
     addon.ClearProgress = ClearProgress
     addon.GetCharDB = GetCharDB
+    addon.AttemptIsActive = AttemptIsActive
+    addon.AttemptActivate = AttemptActivate
+    addon.AttemptFail = AttemptFail
+    addon.AttemptCancel = AttemptCancel
+    addon.ApplyAttemptTransportFailRules = ApplyAttemptTransportFailRules
+    addon.ApplyAttemptWalkOnlyFailRules = ApplyAttemptWalkOnlyFailRules
     addon.GetTab = function() return Tab end
     addon.HideVerticalTab = function()
         if Tab and Tab.squareFrame then
@@ -3957,6 +4359,46 @@ do
             return npcId and tonumber(npcId) or nil
         end
 
+        -- Locale-proof emote detection: DoEmote("WAVE") gives stable tokens regardless of client language.
+        -- We still keep CHAT_MSG_TEXT_EMOTE for other achievements that use row.chatTracker.
+        if not achEvt._cgaDoEmoteHooked and type(hooksecurefunc) == "function" then
+            achEvt._cgaDoEmoteHooked = true
+            hooksecurefunc("DoEmote", function(token, unit)
+                if not addon or addon.Disabled then return end
+                if not token then return end
+
+                -- Require the player to be targeting the correct NPC at the moment the emote is triggered.
+                local guid = UnitGUID("target")
+                local targetNpcId = getNpcIdFromGUID(guid)
+                if not targetNpcId then return end
+
+                local tok = tostring(token):lower()
+                tok = tok:gsub("^/", ""):gsub("%s+", "")
+                if tok == "" then return end
+
+                for _, row in ipairs(addon.AchievementRowModel or {}) do
+                    if row and not IsAchievementAlreadyCompleted(row) then
+                        local def = row._def
+                        local id = row.id or row.achId
+                        local onEmote = def and def.onEmote
+                        local requiredNpc = def and def.targetNpcId
+                        if id and onEmote and requiredNpc and tonumber(requiredNpc) == tonumber(targetNpcId) then
+                            local need = tostring(onEmote):lower()
+                            need = need:gsub("^/", ""):gsub("%s+", "")
+                            if need ~= "" and tok == need then
+                                if def and def.checkInteractDistance == true and type(CheckInteractDistance) == "function" then
+                                    if not CheckInteractDistance("target", 2) then
+                                        return
+                                    end
+                                end
+                                MarkRowCompletedWithToast(row)
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+
         local function getGameObjectIdFromGUID(guid)
             if not guid then
                 return nil
@@ -4024,9 +4466,9 @@ do
             for _, row in ipairs(addon.AchievementRowModel or {}) do
                 if row and not IsAchievementAlreadyCompleted(row) then
                     local def = row._def
+                    local id = row.id or row.achId
                     local requiredOpenObject = def and def.requiredOpenObject
                     if requiredOpenObject and RequiredObjectListContains(requiredOpenObject, objectId) then
-                        local id = row.id or row.achId
                         if id then
                             local p = addon.GetProgress(id) or {}
                             local opened = type(p.openedObjects) == "table" and p.openedObjects or {}
@@ -4035,6 +4477,11 @@ do
                                 addon.SetProgress(id, "openedObjects", opened)
                             end
                         end
+                    end
+
+                    local startObjectId = def and tonumber(def.startObjectId)
+                    if id and def and def.attemptEnabled and startObjectId and startObjectId == objectId and addon.AttemptActivate then
+                        addon.AttemptActivate(id, "obj:" .. tostring(objectId), nil)
                     end
                 end
             end
@@ -4070,9 +4517,9 @@ do
             for _, row in ipairs(addon.AchievementRowModel or {}) do
                 if row and not IsAchievementAlreadyCompleted(row) then
                     local def = row._def
+                    local id = row.id or row.achId
                     local requiredTalkTo = def and def.requiredTalkTo
                     if requiredTalkTo and RequiredNpcListContains(requiredTalkTo, npcId) then
-                        local id = row.id or row.achId
                         if id then
                             local p = addon.GetProgress(id) or {}
                             local talkedTo = type(p.talkedTo) == "table" and p.talkedTo or {}
@@ -4086,22 +4533,46 @@ do
             end
         end
 
-        -- Test UI: attach a small configurable frame to the NPC dialog for specific NPC IDs.
-        -- Config table supports:
-        -- - text: string (displayed on the left)
-        -- - achievementId: string (reserved for later; no side-effects yet)
-        -- - buttonLabel: string|nil (if nil, no button is shown)
-        -- - onClick: function(cfg, npcId, parentFrame) (optional callback invoked on click)
-        local TALK_UI_NPC_CONFIG = {
-            [1749] = {
-                text = "CustomGuildAchievements test UI",
-                achievementId = "GUILD-TALK-KATRANA-1749",
-                buttonLabel = "Goodbye",
-                onClick = function(cfg, npcId, parentFrame)
-                    -- placeholder test callback
-                end,
-            }, -- Lady Katrana Prestor (test)
-        }
+        -- Dynamic NPC attempt UI: derived from defs via def.startNpc.
+        -- When present, the UI shows a parchment note + an overlay button; activation happens on button click.
+        local function GetStartNpcConfigForNpc(npcId)
+            if not npcId or not addon then return nil end
+            local rows = addon.AchievementRowModel or {}
+            for _, row in ipairs(rows) do
+                if row and not IsAchievementAlreadyCompleted(row) then
+                    local def = row._def
+                    local achId = row.id or row.achId
+                    if def and achId and def.attemptEnabled then
+                        local sn = def.startNpc
+                        local snId = sn and (tonumber(sn.npcId) or tonumber(sn.id))
+                        -- Legacy fallback (startNpcId) for older defs.
+                        if not snId then
+                            snId = tonumber(def.startNpcId)
+                        end
+                        if snId and snId == npcId then
+                            local text = sn and sn.text or def.title or ""
+                            local buttonLabel = sn and sn.buttonLabel or "Cancel"
+                            return {
+                                npcId = npcId,
+                                achId = tostring(achId),
+                                text = text,
+                                buttonLabel = buttonLabel,
+                                onClick = function(cfg)
+                                    if sn and type(sn.onClick) == "function" then
+                                        pcall(sn.onClick, cfg, npcId, def)
+                                        return
+                                    end
+                                    if addon and addon.AttemptActivate then
+                                        addon.AttemptActivate(cfg.achId, "npc:" .. tostring(npcId), nil)
+                                    end
+                                end,
+                            }
+                        end
+                    end
+                end
+            end
+            return nil
+        end
 
         local function HideNpcDialogButtonFrame()
             local f = addon and addon.NpcDialogButtonFrame
@@ -4118,7 +4589,7 @@ do
             if not addon or addon.Disabled then return end
             local guid = UnitGUID("npc") or UnitGUID("target")
             local npcId = getNpcIdFromGUID(guid)
-            local cfg = npcId and TALK_UI_NPC_CONFIG[npcId] or nil
+            local cfg = npcId and GetStartNpcConfigForNpc(npcId) or nil
             if not npcId or not cfg then
                 HideNpcDialogButtonFrame()
                 return
@@ -4144,19 +4615,19 @@ do
                 f:SetSize(310, 60)
                 f:SetBackdrop({
                     -- Parchment-style background to match gossip/quest UI
-                    bgFile = "Interface\\QuestFrame\\QuestBG-Tile",
+                    bgFile = "Interface\\GossipFrame\\GossipFrameBG",
                     --edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-                    tile = true, tileSize = 32, edgeSize = 12,
+                    tile = true, --tileSize = 32, edgeSize = 12,
                     insets = { left = 3, right = 3, top = 3, bottom = 3 }
                 })
                 -- Slight tint so text stays readable
                 f:SetBackdropColor(1, 0.98, 0.9, 0.95)
 
                 local label = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-                label:SetPoint("LEFT", f, "LEFT", 10, 0)
-                label:SetPoint("RIGHT", f, "RIGHT", -10, 0)
+                label:SetPoint("TOPLEFT", f, "TOPLEFT", 10, -6)
+                label:SetPoint("TOPRIGHT", f, "TOPRIGHT", -10, -6)
                 label:SetJustifyH("LEFT")
-                label:SetJustifyV("MIDDLE")
+                label:SetJustifyV("TOP")
                 label:SetTextColor(0.15, 0.12, 0.08, 1)
                 label:SetText("")
                 f._label = label
@@ -4249,6 +4720,21 @@ do
 
                     b:SetParent(parent)
                     b:SetText(btnLabel)
+                    -- Width from rendered text (UIPanelButtonTemplate); fallback ~7px/char + padding if no font string.
+                    do
+                        local pad = 24
+                        local minW = 70
+                        local fs = b.GetFontString and b:GetFontString()
+                        local textW = 0
+                        if fs and fs.GetStringWidth then
+                            textW = fs:GetStringWidth() or 0
+                        elseif type(btnLabel) == "string" then
+                            textW = (#btnLabel) * 7
+                        end
+                        local w = math.floor((tonumber(textW) or 0) + pad)
+                        if w < minW then w = minW end
+                        b:SetWidth(w)
+                    end
                     b:SetScript("OnClick", function()
                         if type(cfg.onClick) == "function" then
                             pcall(cfg.onClick, cfg, npcId, parent)
@@ -4273,7 +4759,7 @@ do
 
                     local anchor = FindGoodbyeButton()
                     b:ClearAllPoints()
-                    b:SetSize(100, 20)
+                    b:SetHeight(22)
                     b:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -6, 5)
                     b:Show()
                 else
@@ -4286,8 +4772,8 @@ do
             -- Final label position (slightly up) after overlay branch may have reset points
             if f._label then
                 f._label:ClearAllPoints()
-                f._label:SetPoint("LEFT", f, "LEFT", 10, 4)
-                f._label:SetPoint("RIGHT", f, "RIGHT", -10, 4)
+                f._label:SetPoint("TOPLEFT", f, "TOPLEFT", 10, -6)
+                f._label:SetPoint("TOPRIGHT", f, "TOPRIGHT", -10, -6)
             end
 
             f:ClearAllPoints()
@@ -4547,7 +5033,18 @@ do
         achEvt:RegisterEvent("PLAYER_ENTERING_WORLD")
         achEvt:RegisterEvent("UPDATE_FACTION")
         achEvt:RegisterEvent("UNIT_AURA")
+        -- More reliable than UNIT_AURA for mounts; fires on mount/dismount changes.
+        achEvt:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED")
+        achEvt:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
+        achEvt:RegisterEvent("PLAYER_STARTED_MOVING")
         achEvt:RegisterEvent("MAP_EXPLORATION_UPDATED")
+        achEvt._cgaWalkPollAccum = 0
+        achEvt:SetScript("OnUpdate", function(self, elapsed)
+            self._cgaWalkPollAccum = (self._cgaWalkPollAccum or 0) + (elapsed or 0)
+            if self._cgaWalkPollAccum < 0.2 then return end
+            self._cgaWalkPollAccum = 0
+            ApplyAttemptWalkOnlyFailRules()
+        end)
         achEvt:SetScript("OnEvent", function(_, event, ...)
             -- Clean up external player tracking on zone loads
             if event == "PLAYER_ENTERING_WORLD" then
@@ -4927,6 +5424,11 @@ do
             elseif event == "UNIT_AURA" then
                 local unit = ...
                 if unit ~= "player" then return end
+
+                -- Transport fail rules (failOnMount, failOnDruidCatForm, ...): active attempt only.
+                ApplyAttemptTransportFailRules()
+                ApplyAttemptWalkOnlyFailRules()
+
                 for _, row in ipairs(addon.AchievementRowModel or {}) do
                     -- Check both row.completed and database to prevent re-completion
                     if not IsAchievementAlreadyCompleted(row) and type(row.auraTracker) == "function" then
@@ -4937,6 +5439,11 @@ do
                         end
                     end
                 end
+            elseif event == "PLAYER_MOUNT_DISPLAY_CHANGED" or event == "UPDATE_SHAPESHIFT_FORM" then
+                ApplyAttemptTransportFailRules()
+                ApplyAttemptWalkOnlyFailRules()
+            elseif event == "PLAYER_STARTED_MOVING" then
+                ApplyAttemptWalkOnlyFailRules()
             elseif event == "UNIT_INVENTORY_CHANGED" then
                 local unit = ...
                 if unit ~= "player" then return end
