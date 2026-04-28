@@ -1,6 +1,6 @@
 ﻿## Interface: 11508, 20505
 ## Title: CustomGuildAchievements
-## Author: JulioP
+## Author: Rogue2112
 ## Version: 1.5
 ## Notes: Custom Guild Hardcore achievements system
 ## OptionalDeps: Ace3, CallbackHandler-1.0, LibDataBroker-1.1, LibDBIcon-1.0, LibStub, LibUIDropDownMenu
