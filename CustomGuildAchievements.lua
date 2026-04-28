@@ -4359,6 +4359,512 @@ do
             return npcId and tonumber(npcId) or nil
         end
 
+        -- =========================================================
+        -- Cursor hints: show a speech bubble for startNpc and a marker for targets
+        -- =========================================================
+        local RAID_ICON_TEXCOORDS = {
+            star =   { 0.00, 0.25, 0.00, 0.25 },
+            circle = { 0.25, 0.50, 0.00, 0.25 },
+            diamond ={ 0.50, 0.75, 0.00, 0.25 },
+            triangle={ 0.75, 1.00, 0.00, 0.25 },
+            moon =   { 0.00, 0.25, 0.25, 0.50 },
+            square = { 0.25, 0.50, 0.25, 0.50 },
+            cross =  { 0.50, 0.75, 0.25, 0.50 },
+            skull =  { 0.75, 1.00, 0.25, 0.50 },
+        }
+
+        local function NormalizeWithIconSpec(spec)
+            if spec == nil then return nil end
+            if type(spec) == "number" then
+                return { kind = "fileid", fileid = spec }
+            end
+            local s = tostring(spec)
+            if s == "" then return nil end
+            local key = s:lower():gsub("^/", ""):gsub("%s+", "")
+            if key == "bubble" or key == "gossip" or key == "talk" then
+                return { kind = "texture", texture = "Interface\\GossipFrame\\GossipGossipIcon", tex = nil }
+            end
+            if key == "copper" then
+                return { kind = "texture", texture = "Interface\\MoneyFrame\\UI-CopperIcon", tex = nil }
+            end
+            if key == "silver" then
+                return { kind = "texture", texture = "Interface\\MoneyFrame\\UI-SilverIcon", tex = nil }
+            end
+            if key == "gold" then
+                return { kind = "texture", texture = "Interface\\MoneyFrame\\UI-GoldIcon", tex = nil }
+            end
+            local rc = RAID_ICON_TEXCOORDS[key]
+            if rc then
+                return { kind = "raid", texture = "Interface\\TargetingFrame\\UI-RaidTargetingIcons", tex = rc }
+            end
+            -- If it looks like a Blizzard path, let it pass through as-is.
+            if s:find("\\") or s:find("/") then
+                local tex = s:gsub("/", "\\")
+                return { kind = "texture", texture = tex, tex = nil }
+            end
+            -- Try numeric string (FileID)
+            local n = tonumber(s)
+            if n then
+                return { kind = "fileid", fileid = n }
+            end
+            -- Fallback: treat as raid icon keyword if it matches without whitespace, else ignore
+            return nil
+        end
+
+        local function ApplyWithIconToTexture(texObj, spec, defaultSpec)
+            if not texObj then return end
+            local chosen = spec or defaultSpec
+            if not chosen then
+                texObj:Hide()
+                return
+            end
+            texObj:Show()
+            if chosen.kind == "fileid" then
+                texObj:SetTexture(chosen.fileid)
+                texObj:SetTexCoord(0, 1, 0, 1)
+            elseif chosen.kind == "raid" then
+                texObj:SetTexture(chosen.texture)
+                local t = chosen.tex
+                if t then
+                    texObj:SetTexCoord(t[1], t[2], t[3], t[4])
+                else
+                    texObj:SetTexCoord(0, 1, 0, 1)
+                end
+            else
+                texObj:SetTexture(chosen.texture)
+                texObj:SetTexCoord(0, 1, 0, 1)
+            end
+        end
+
+        if not achEvt._cgaNpcCursorHint then
+            local hint = CreateFrame("Frame", nil, UIParent)
+            hint:SetSize(1, 1)
+            hint:Hide()
+            hint:SetFrameStrata("TOOLTIP")
+            hint:SetFrameLevel(2000)
+
+            local bubble = hint:CreateTexture(nil, "OVERLAY")
+            bubble:SetSize(22, 22)
+            bubble:SetTexture("Interface\\GossipFrame\\GossipGossipIcon")
+            bubble:SetPoint("CENTER", hint, "CENTER", 0, 0)
+            bubble:Hide()
+            hint.bubble = bubble
+
+            local marker = hint:CreateTexture(nil, "OVERLAY")
+            marker:SetSize(20, 20)
+            marker:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcons")
+            -- STAR (index 1) texcoords
+            marker:SetTexCoord(0.00, 0.25, 0.00, 0.25)
+            marker:SetPoint("LEFT", bubble, "RIGHT", 4, 0)
+            marker:Hide()
+            hint.marker = marker
+
+            local function updatePos()
+                local x, y = GetCursorPosition()
+                local scale = UIParent and UIParent.GetScale and UIParent:GetScale() or 1
+                if not x or not y or not scale or scale == 0 then return end
+                hint:ClearAllPoints()
+                hint:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", (x / scale) + 16, (y / scale) + 16)
+            end
+
+            hint._cgaHoverGuid = nil
+            hint._cgaHoverCheckAcc = 0
+            hint:SetScript("OnUpdate", function(self, elapsed)
+                updatePos()
+
+                -- Hide as soon as we stop hovering the NPC.
+                self._cgaHoverCheckAcc = (self._cgaHoverCheckAcc or 0) + (elapsed or 0)
+                if self._cgaHoverCheckAcc < 0.05 then return end
+                self._cgaHoverCheckAcc = 0
+
+                if not self:IsShown() then
+                    self._cgaHoverGuid = nil
+                    return
+                end
+                if not UnitExists("mouseover") then
+                    self:Hide()
+                    self._cgaHoverGuid = nil
+                    return
+                end
+                local g = UnitGUID("mouseover")
+                if not g or (self._cgaHoverGuid and g ~= self._cgaHoverGuid) then
+                    self:Hide()
+                    self._cgaHoverGuid = nil
+                    return
+                end
+            end)
+
+            achEvt._cgaNpcCursorHint = hint
+        end
+
+        local function DefContainsNpcId(val, npcId)
+            if not val or not npcId then return false end
+            if type(val) == "number" or type(val) == "string" then
+                return tonumber(val) == tonumber(npcId)
+            end
+            if type(val) == "table" then
+                if val[npcId] ~= nil or val[tostring(npcId)] ~= nil then return true end
+                for _, v in pairs(val) do
+                    if type(v) == "table" then
+                        for _, id2 in pairs(v) do
+                            if tonumber(id2) == tonumber(npcId) then return true end
+                        end
+                    else
+                        if tonumber(v) == tonumber(npcId) then return true end
+                    end
+                end
+            end
+            return false
+        end
+
+        local function DefTargetPlayerNameMatches(targetNpcId, unit)
+            if type(targetNpcId) ~= "string" or not unit then return false end
+            if not UnitIsPlayer(unit) then return false end
+            local name = UnitName(unit)
+            if not name or name == "" then return false end
+            return name:lower() == targetNpcId:lower()
+        end
+
+        local function RequiredTargetContainsNpcId(requiredTarget, npcId)
+            if type(requiredTarget) ~= "table" or not npcId then return false end
+            if requiredTarget[npcId] ~= nil or requiredTarget[tostring(npcId)] ~= nil then
+                return true
+            end
+            for _, v in pairs(requiredTarget) do
+                if type(v) == "table" then
+                    for _, id2 in pairs(v) do
+                        if tonumber(id2) == tonumber(npcId) then return true end
+                    end
+                end
+            end
+            return false
+        end
+
+        local function UpdateNpcCursorHintForMouseover()
+            local hint = achEvt._cgaNpcCursorHint
+            if not hint then return end
+            if not addon or addon.Disabled then
+                hint:Hide()
+                return
+            end
+            -- When a startNpc custom window is open, hide the cursor hint to reduce UI clutter.
+            do
+                local w = addon and addon._cgaCustomWindow
+                if w and w.IsShown and w:IsShown() then
+                    hint:Hide()
+                    hint._cgaHoverGuid = nil
+                    return
+                end
+            end
+            if not UnitExists("mouseover") then
+                hint:Hide()
+                return
+            end
+            local isPlayer = UnitIsPlayer("mouseover")
+            local guid = UnitGUID("mouseover")
+            local npcId = (not isPlayer) and getNpcIdFromGUID(guid) or nil
+            local playerName = isPlayer and UnitName("mouseover") or nil
+            if (not isPlayer and not npcId) or (isPlayer and (not playerName or playerName == "")) then
+                hint:Hide()
+                return
+            end
+
+            local showBubble = false
+            local bubbleSpec = nil
+            for _, row in ipairs(addon.AchievementRowModel or {}) do
+                if row and not IsAchievementAlreadyCompleted(row) then
+                    local def = row._def
+                    if def then
+                        local sn = def.startNpc
+                        local startNpcId = sn and (tonumber(sn.npcId) or tonumber(sn.id)) or tonumber(def.startNpcId)
+                        if (not isPlayer) and sn and type(sn.window) == "table" and startNpcId and tonumber(startNpcId) == tonumber(npcId) then
+                            -- Always show a gossip-style bubble for startNpc (no withIcon required).
+                            showBubble = true
+                            bubbleSpec = bubbleSpec or NormalizeWithIconSpec("bubble")
+                        end
+                    end
+                end
+                if showBubble then break end
+            end
+
+            if not showBubble then
+                hint:Hide()
+                hint._cgaHoverGuid = nil
+                return
+            end
+
+            if showBubble then
+                hint.bubble:SetShown(true)
+                ApplyWithIconToTexture(hint.bubble, bubbleSpec, nil)
+            else
+                hint.bubble:Hide()
+            end
+            -- No target marker: user requested to remove raid star on targets.
+            hint.marker:Hide()
+
+            hint:Show()
+            hint._cgaHoverGuid = guid
+        end
+
+        -- =========================================================
+        -- Target startNpc window (open on target + interact distance)
+        -- =========================================================
+        if not addon._cgaCustomWindow then
+            local f
+            do
+                -- Prefer a Blizzard-like window template when available.
+                local ok, created = pcall(CreateFrame, "Frame", "CGA_CustomNpcWindow", UIParent, "BasicFrameTemplateWithInset")
+                if ok and created then
+                    f = created
+                else
+                    f = CreateFrame("Frame", "CGA_CustomNpcWindow", UIParent, "BackdropTemplate")
+                end
+            end
+            f:SetSize(360, 220)
+            f:SetPoint("CENTER", UIParent, "CENTER", 0, 120)
+            f:SetFrameStrata("DIALOG")
+            f:SetFrameLevel(2000)
+            f:Hide()
+
+            -- Background: use parchment-style texture (quest/gossip-like) with a safe fallback.
+            do
+                local bgParent = (f.Inset and f.Inset.GetObjectType and f.Inset) or f
+                local bg = f:CreateTexture(nil, "BACKGROUND")
+                bg:SetAllPoints(bgParent)
+                bg:SetTexture("Interface\\QuestFrame\\QuestBG")
+                bg:SetVertexColor(1, 1, 1, 1)
+                f._cgaBg = bg
+
+                -- If BackdropTemplate exists, keep border as a fallback.
+                if type(f.SetBackdrop) == "function" then
+                    f:SetBackdrop({
+                        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+                        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+                        tile = true,
+                        tileSize = 32,
+                        edgeSize = 32,
+                        insets = { left = 11, right = 12, top = 12, bottom = 11 },
+                    })
+                    if type(f.SetBackdropColor) == "function" then
+                        f:SetBackdropColor(1, 1, 1, 1)
+                    end
+                    if type(f.SetBackdropBorderColor) == "function" then
+                        f:SetBackdropBorderColor(1, 1, 1, 1)
+                    end
+                end
+            end
+
+            -- Title: use template's TitleText when present to match Blizzard frames.
+            local title = f.TitleText
+            if not title then
+                title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+                title:SetPoint("TOP", f, "TOP", 0, -16)
+            end
+            title:SetText("")
+            f.title = title
+
+            local scroll = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
+            scroll:SetPoint("TOPLEFT", f, "TOPLEFT", 16, -44)
+            scroll:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -34, 50)
+            f.scroll = scroll
+
+            local body = CreateFrame("Frame", nil, scroll)
+            body:SetSize(1, 1)
+            scroll:SetScrollChild(body)
+            f.body = body
+
+            local text = body:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+            text:SetPoint("TOPLEFT", body, "TOPLEFT", 0, 0)
+            text:SetPoint("TOPRIGHT", body, "TOPRIGHT", 0, 0)
+            text:SetJustifyH("LEFT")
+            text:SetJustifyV("TOP")
+            text:SetText("")
+            f.text = text
+
+            local function RefreshLayout()
+                if not f:IsShown() then return end
+                local w = f.scroll and f.scroll.GetWidth and f.scroll:GetWidth() or 0
+                -- UIPanelScrollFrameTemplate has a scrollbar; keep some padding.
+                w = (tonumber(w) or 0) - 6
+                if w and w > 20 then
+                    f.body:SetWidth(w)
+                    f.text:SetWidth(w)
+                end
+                local th = f.text:GetStringHeight() or 0
+                f.body:SetHeight(th + 6)
+            end
+            f._cgaRefreshLayout = RefreshLayout
+
+            -- Close button: template may already include one.
+            local close = f.CloseButton
+            if not close then
+                close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+                close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
+            end
+            f.close = close
+
+            local btn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+            btn:SetSize(140, 22)
+            btn:SetPoint("BOTTOM", f, "BOTTOM", 0, 18)
+            btn:SetText("OK")
+            f.btn = btn
+
+            local function CGA_PlayWindowSound(spec)
+                if spec == nil then return end
+                local sid = nil
+                if type(spec) == "number" then
+                    sid = spec
+                else
+                    local key = tostring(spec):lower():gsub("%s+", "")
+                    if key == "coins" or key == "coin" or key == "copper" or key == "money" then
+                        sid = (SOUNDKIT and (SOUNDKIT.LOOT_WINDOW_COIN_SOUND or SOUNDKIT.LOOTWINDOWCOINSOUND)) or 120
+                    elseif key == "failed" or key == "fail" then
+                        sid = (SOUNDKIT and SOUNDKIT.IG_QUEST_FAILED) or "igQuestFailed"
+                    end
+                end
+                if sid then
+                    pcall(PlaySound, sid)
+                end
+            end
+            addon._cgaPlayWindowSound = CGA_PlayWindowSound
+
+            btn:SetScript("OnClick", function()
+                local def = f._cgaDef
+                local npcId = f._cgaNpcId
+                -- Optional button sound
+                do
+                    local sn = def and def.startNpc
+                    local w = sn and sn.window
+                    local s = w and w.buttonSound
+                    if s ~= nil then
+                        CGA_PlayWindowSound(s)
+                    end
+                end
+                local shouldComplete = false
+                do
+                    local sn = def and def.startNpc
+                    local w = sn and sn.window
+                    if w and type(w.callback) == "function" then
+                        local ok, ret = pcall(w.callback, def, npcId)
+                    if ok and ret == true then
+                        shouldComplete = true
+                    end
+                end
+                end
+                if shouldComplete then
+                    for _, row in ipairs(addon.AchievementRowModel or {}) do
+                        if row and row._def == def and not IsAchievementAlreadyCompleted(row) then
+                            MarkRowCompletedWithToast(row)
+                            break
+                        end
+                    end
+                end
+                f:Hide()
+            end)
+
+            f:SetScript("OnShow", function(self)
+                self.scroll:SetVerticalScroll(0)
+                if self._cgaRefreshLayout then
+                    self._cgaRefreshLayout()
+                    if C_Timer and C_Timer.After then
+                        C_Timer.After(0, function()
+                            if self and self.IsShown and self:IsShown() and self._cgaRefreshLayout then
+                                self._cgaRefreshLayout()
+                            end
+                        end)
+                    end
+                end
+            end)
+
+            addon._cgaCustomWindow = f
+        end
+
+        local function ExpandWindowTextPlaceholders(txt)
+            if txt == nil then return txt end
+            txt = tostring(txt)
+            -- Texture tags: |Ttexture:width:height|t
+            txt = txt:gsub("{copper}", "|TInterface\\MoneyFrame\\UI%-CopperIcon:14:14|t")
+            txt = txt:gsub("{silver}", "|TInterface\\MoneyFrame\\UI%-SilverIcon:14:14|t")
+            txt = txt:gsub("{gold}", "|TInterface\\MoneyFrame\\UI%-GoldIcon:14:14|t")
+            return txt
+        end
+
+        local function OpenStartNpcWindow(def, npcId)
+            local w = addon and addon._cgaCustomWindow
+            if not (w and def) then return end
+            local sn = def.startNpc
+            local cfg = sn and sn.window
+            if type(cfg) ~= "table" then return end
+
+            w._cgaDef = def
+            w._cgaNpcId = npcId
+            w._cgaRequireInteractDistance = (def.checkInteractDistance == true)
+            w.title:SetText(cfg.title or def.title or "")
+            w.text:SetText(ExpandWindowTextPlaceholders(cfg.text or def.tooltip or ""))
+            w.btn:SetText(cfg.buttonLabel or "OK")
+            w:Show()
+            if w._cgaRefreshLayout then
+                w:_cgaRefreshLayout()
+            end
+        end
+
+        local function CloseStartNpcWindowIfInvalid()
+            local w = addon and addon._cgaCustomWindow
+            if not (w and w.IsShown and w:IsShown()) then return end
+            local def = w._cgaDef
+            local npcId = w._cgaNpcId
+            if not (def and npcId) then
+                w:Hide()
+                return
+            end
+            if not UnitExists("target") or UnitIsPlayer("target") then
+                w:Hide()
+                return
+            end
+            local guid = UnitGUID("target")
+            local tnpc = getNpcIdFromGUID(guid)
+            if not tnpc or tonumber(tnpc) ~= tonumber(npcId) then
+                w:Hide()
+                return
+            end
+            if w._cgaRequireInteractDistance and type(CheckInteractDistance) == "function" then
+                if not CheckInteractDistance("target", 2) then
+                    w:Hide()
+                    return
+                end
+            end
+        end
+
+        local function TryOpenStartNpcWindowOnTarget()
+            if not addon or addon.Disabled then return end
+            if not UnitExists("target") or UnitIsPlayer("target") then return end
+            if type(CheckInteractDistance) == "function" and not CheckInteractDistance("target", 2) then
+                return
+            end
+
+            local guid = UnitGUID("target")
+            if not guid then return end
+            if achEvt._cgaLastStartWindowGuid == guid then
+                return
+            end
+
+            local npcId = getNpcIdFromGUID(guid)
+            if not npcId then return end
+
+            for _, row in ipairs(addon.AchievementRowModel or {}) do
+                if row and not IsAchievementAlreadyCompleted(row) then
+                    local def = row._def
+                    local sn = def and def.startNpc
+                    local startNpcId = sn and (tonumber(sn.npcId) or tonumber(sn.id)) or tonumber(def and def.startNpcId)
+                    if startNpcId and tonumber(startNpcId) == tonumber(npcId) and sn and type(sn.window) == "table" then
+                        achEvt._cgaLastStartWindowGuid = guid
+                        OpenStartNpcWindow(def, tonumber(npcId))
+                        return
+                    end
+                end
+            end
+        end
+
         -- Locale-proof emote detection: DoEmote("WAVE") gives stable tokens regardless of client language.
         -- We still keep CHAT_MSG_TEXT_EMOTE for other achievements that use row.chatTracker.
         if not achEvt._cgaDoEmoteHooked and type(hooksecurefunc) == "function" then
@@ -4544,6 +5050,11 @@ do
                     local achId = row.id or row.achId
                     if def and achId and def.attemptEnabled then
                         local sn = def.startNpc
+                        -- New UX: startNpc windows are opened on target + interact distance (no overlay injection).
+                        -- If a startNpc has a window config, skip the legacy overlay system entirely.
+                        if sn and type(sn.window) == "table" then
+                            -- continue
+                        else
                         local snId = sn and (tonumber(sn.npcId) or tonumber(sn.id))
                         -- Legacy fallback (startNpcId) for older defs.
                         if not snId then
@@ -4567,6 +5078,7 @@ do
                                     end
                                 end,
                             }
+                        end
                         end
                     end
                 end
@@ -5020,6 +5532,8 @@ do
         achEvt:RegisterEvent("CHAT_MSG_TEXT_EMOTE")
         achEvt:RegisterEvent("GOSSIP_SHOW")
         achEvt:RegisterEvent("GOSSIP_CLOSED")
+        achEvt:RegisterEvent("MERCHANT_SHOW")
+        achEvt:RegisterEvent("MERCHANT_CLOSED")
         achEvt:RegisterEvent("QUEST_GREETING")
         achEvt:RegisterEvent("QUEST_DETAIL")
         achEvt:RegisterEvent("QUEST_PROGRESS")
@@ -5037,6 +5551,8 @@ do
         achEvt:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED")
         achEvt:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
         achEvt:RegisterEvent("PLAYER_STARTED_MOVING")
+        achEvt:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
+        achEvt:RegisterEvent("PLAYER_TARGET_CHANGED")
         achEvt:RegisterEvent("MAP_EXPLORATION_UPDATED")
         achEvt._cgaWalkPollAccum = 0
         achEvt:SetScript("OnUpdate", function(self, elapsed)
@@ -5044,6 +5560,10 @@ do
             if self._cgaWalkPollAccum < 0.2 then return end
             self._cgaWalkPollAccum = 0
             ApplyAttemptWalkOnlyFailRules()
+            -- If the player targets a startNpc and is close enough, open the custom window.
+            TryOpenStartNpcWindowOnTarget()
+            -- If the player changes target or moves away, close the custom window immediately.
+            CloseStartNpcWindowIfInvalid()
         end)
         achEvt:SetScript("OnEvent", function(_, event, ...)
             -- Clean up external player tracking on zone loads
@@ -5444,6 +5964,30 @@ do
                 ApplyAttemptWalkOnlyFailRules()
             elseif event == "PLAYER_STARTED_MOVING" then
                 ApplyAttemptWalkOnlyFailRules()
+            elseif event == "UPDATE_MOUSEOVER_UNIT" then
+                UpdateNpcCursorHintForMouseover()
+            elseif event == "PLAYER_TARGET_CHANGED" then
+                if not UnitExists("target") then
+                    achEvt._cgaLastStartWindowGuid = nil
+                end
+                TryOpenStartNpcWindowOnTarget()
+                CloseStartNpcWindowIfInvalid()
+                -- Support: targetNpcId can be a player name string (case-insensitive).
+                if UnitExists("target") and UnitIsPlayer("target") then
+                    local tn = UnitName("target")
+                    if tn and tn ~= "" then
+                        local tnl = tn:lower()
+                        for _, row in ipairs(addon.AchievementRowModel or {}) do
+                            if row and not IsAchievementAlreadyCompleted(row) then
+                                local def = row._def
+                                local targetNpcId = def and def.targetNpcId
+                                if type(targetNpcId) == "string" and targetNpcId:lower() == tnl then
+                                    MarkRowCompletedWithToast(row)
+                                end
+                            end
+                        end
+                    end
+                end
             elseif event == "UNIT_INVENTORY_CHANGED" then
                 local unit = ...
                 if unit ~= "player" then return end
@@ -5588,6 +6132,51 @@ do
                                     break
                                 end
                             end
+                        end
+                    end
+                end
+            elseif event == "MERCHANT_SHOW" then
+                -- Optional trigger: spend copper at a specific NPC merchant (def.spendAtNpcId + def.spendCopper).
+                local guid = UnitGUID("npc") or UnitGUID("target")
+                local npcId = getNpcIdFromGUID(guid)
+                if not npcId then return end
+
+                local matches = {}
+                for _, row in ipairs(addon.AchievementRowModel or {}) do
+                    if row and not IsAchievementAlreadyCompleted(row) then
+                        local def = row._def
+                        local id = row.id or row.achId
+                        local needNpc = def and tonumber(def.spendAtNpcId)
+                        local needCopper = def and tonumber(def.spendCopper)
+                        if id and needNpc and needCopper and needCopper > 0 and needNpc == tonumber(npcId) then
+                            matches[tostring(id)] = needCopper
+                        end
+                    end
+                end
+                if next(matches) then
+                    addon._cgaMerchantSpendState = {
+                        npcId = tonumber(npcId),
+                        startMoney = GetMoney and GetMoney() or 0,
+                        needs = matches, -- [achId]=copper
+                    }
+                else
+                    addon._cgaMerchantSpendState = nil
+                end
+            elseif event == "MERCHANT_CLOSED" then
+                local st = addon and addon._cgaMerchantSpendState
+                addon._cgaMerchantSpendState = nil
+                if not st or not st.needs then return end
+                local startMoney = tonumber(st.startMoney) or 0
+                local endMoney = GetMoney and GetMoney() or 0
+                local spent = startMoney - tonumber(endMoney or 0)
+                if not spent or spent <= 0 then return end
+
+                for _, row in ipairs(addon.AchievementRowModel or {}) do
+                    if row and not IsAchievementAlreadyCompleted(row) then
+                        local id = row.id or row.achId
+                        local need = id and st.needs[tostring(id)]
+                        if need and spent >= tonumber(need) then
+                            MarkRowCompletedWithToast(row)
                         end
                     end
                 end

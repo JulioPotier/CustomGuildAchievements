@@ -407,6 +407,11 @@ local function RegisterAchievementDef(def, overrides)
         onEmote = def.onEmote,
         -- Optional proximity gate (opt-in): require CheckInteractDistance("target", 2) at trigger time.
         checkInteractDistance = def.checkInteractDistance,
+        -- Optional merchant spend trigger (opt-in): require spending copper at a specific NPC (merchant).
+        spendAtNpcId = def.spendAtNpcId,
+        spendCopper = def.spendCopper,
+        -- Cursor hint icon keyword / texture / FileID (optional).
+        withIcon = def.withIcon or def.withicon,
         requiredKills = def.requiredKills,
         requiredTarget = def.requiredTarget,
         requiredTalkTo = def.requiredTalkTo,

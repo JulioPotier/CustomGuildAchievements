@@ -160,8 +160,18 @@ GuildAchievements = {
     walkOnly = true,
     startNpc = {
       npcId = 68,
-      text = "\nThe Saddle Is Lava\n\nSwear you will not mount, shapeshift for speed, use hunter running aspects, or Ghost Wolf — only foot travel allowed for this challenge.\n\nNow go see King Magni Bronzebeard in Ironforge.",
-      buttonLabel = "I swear (strict travel)",
+      window = {
+        title = "The Saddle Is Lava",
+        text = "Swear you will not mount, shapeshift for speed, use hunter running aspects, or Ghost Wolf — only foot travel allowed for this challenge.\n\nClick below to start your vow.",
+        buttonLabel = "I swear (strict travel)",
+        buttonSound = "coins",
+        callback = function(def, npcId)
+          if addon and addon.AttemptActivate then
+            addon.AttemptActivate(def.achId, "npc:" .. tostring(npcId), nil)
+          end
+          return false
+        end,
+      },
     },
     timerSet = 900,
     requiredTalkTo = {
@@ -182,6 +192,7 @@ GuildAchievements = {
     },
     trackTargetOnChange = true,
     secretTracker = true,
+    checkInteractDistance = true,
   },  
   -- // OPEN object
   {
@@ -218,6 +229,7 @@ GuildAchievements = {
     targetNpcId = 68,
     onEmote = "wave",
     checkInteractDistance = true,
+    withIcon = "bubble",
   },
 }
 
@@ -295,3 +307,35 @@ if addon then
 
   addon.GuildAchievements = GuildAchievements
 end
+
+--[[
+Gossip / talk
+Interface\\GossipFrame\\GossipGossipIcon (default bubble)
+Interface\\GossipFrame\\BinderGossipIcon
+Interface\\GossipFrame\\VendorGossipIcon
+Interface\\GossipFrame\\TaxiGossipIcon
+Interface\\GossipFrame\\HealerGossipIcon
+Interface\\GossipFrame\\TrainerGossipIcon
+(and many others in Interface\\GossipFrame\\*GossipIcon)
+
+Quests
+Interface\\GossipFrame\\AvailableQuestIcon
+Interface\\GossipFrame\\ActiveQuestIcon
+Interface\\GossipFrame\\IncompleteQuestIcon
+Interface\\GossipFrame\\DailyQuestIcon
+(and many others in Interface\\GossipFrame\\*QuestIcon)
+
+Clear markers
+Interface\\TargetingFrame\\UI-RaidTargetingIcons (spritesheet : star/circle/diamond… via SetTexCoord) (and many others in Interface\\TargetingFrame\\*RaidTargetingIcons)
+Interface\\COMMON\\Indicator-Yellow / Interface\\COMMON\\Indicator-Red (depending on version)
+
+Alerts / interaction
+Interface\\DialogFrame\\UI-Dialog-Icon-AlertNew
+Interface\\DialogFrame\\UI-Dialog-Icon-AlertOther
+Interface\\Buttons\\UI-GroupLoot-Pass-Up (cross)
+Interface\\Buttons\\UI-CheckBox-Check (checkmark)
+Icons (FileID) (and many others in Interface\\Buttons\\*Button)
+(FileID) startNpc.icon 
+
+Interface\\Common\\, Interface\\Buttons\\, Interface\\DialogFrame\\
+]]

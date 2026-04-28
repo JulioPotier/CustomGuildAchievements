@@ -37,6 +37,7 @@ Achievements\Common.lua
 Achievements\MetaCommon.lua
 Achievements\DungeonCommon.lua [AllowLoadGameType vanilla]
 Achievements\GuildCatalog.lua [AllowLoadGameType vanilla]
+Achievements\CustomCatalog.lua [AllowLoadGameType vanilla]
 
 Utils\Dashboard.lua
 Utils\CommandHandler.lua
