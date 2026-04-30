@@ -26,15 +26,106 @@ local CustomAchievements = {
 
   -- Example 2: simple kill achievement
   {
-    achId = "CUSTOM-KILL-SPIDER-30",
-    title = "Bug squasher",
-    tooltip = "Kill a Forest Spider in Duskwood.",
-    icon = 134321,
+    achId = "CUSTOM-KILL-RAT-CHAIN-TEST-0001",
+    title = "Rat killer",
+    tooltip = "Kill a Rat in Stormwind City.",
+    icon = 132367,
     points = 5,
     level = nil,
-    targetNpcId = 30, -- Forest Spider
-    zoneAccurate = 1431,
-    zone = "Duskwood",
+    targetNpcId = 4075, -- Rat
+    zoneAccurate = 1453,
+    zone = "Stormwind City",
+  },
+  {
+    achId = "CUSTOM-KILL-RAT-CHAIN-TEST-0002",
+    title = "Rat killer II",
+    tooltip = "Kill another Rat in Stormwind City.",
+    icon = 132367,
+    points = 5,
+    level = nil,
+    targetNpcId = 4075, -- Rat
+    zoneAccurate = 1453,
+    zone = "Stormwind City",
+    unlockedBy = "CUSTOM-KILL-RAT-CHAIN-TEST-0001",
+  },
+  {
+    achId = "CUSTOM-KILL-RAT-CHAIN-TEST-0003",
+    title = "Rat killer III",
+    tooltip = "Kill yet another Rat in Stormwind City.",
+    icon = 132367,
+    points = 5,
+    level = nil,
+    targetNpcId = 4075, -- Rat
+    zoneAccurate = 1453,
+    zone = "Stormwind City",
+    unlockedBy = "CUSTOM-KILL-RAT-CHAIN-TEST-0002",
+  },
+  {
+    achId = "CUSTOM-ITEM-7723-INBAG",
+    title = "Mograine's Might (in bag)",
+    tooltip = "Have Mograine's Might (item 7723) in your inventory.",
+    icon = 136116,
+    points = 5,
+    level = nil,
+    customItem = function()
+      return GetItemCount(7723, true) > 0
+    end,
+  },
+  {
+    achId = "CUSTOM-ITEM-7723-EQUIPPED",
+    title = "Mograine's Might (equipped)",
+    tooltip = "Have Mograine's Might (item 7723) equipped in any equipment slot.",
+    icon = 136116,
+    points = 5,
+    level = nil,
+    customItem = function()
+      -- Classic equipment slots: 1..19 (head..ranged slot order; includes offhand).
+      for slot = 1, 19 do
+        local id = GetInventoryItemID("player", slot)
+        if id == 7723 then
+          return true
+        end
+      end
+      return false
+    end,
+  },
+  {
+    achId = "CUSTOM-ATTEMPT-FALL-DAMAGE-5PCX",
+    title = "Leap of Faith (3 tries)",
+    tooltip = "Open gossip with General Marcus Jonathan to start a run. You have 3 attempts total to lose at least 5% HP from a single fall. Best fall % is kept across attempts.",
+    icon = 132886,
+    points = 10,
+    level = nil,
+    attemptEnabled = true,
+    attemptsAllowed = 3,
+    requiredFallHpLossPct = 5,
+    startNpc = {
+      npcId = 466, -- General Marcus Jonathan
+      mapId = 1453, -- Stormwind City
+      x = 0.64055508375168,
+      y = 0.75485122203827,
+      mapPin = true,
+      window = {
+        title = "Leap of Faith",
+        text = "Take a dangerous fall and lose at least 5% of your health in one impact.\n\nYou only have 3 starts total, but your best fall percentage is preserved across attempts.",
+        buttonLabel = "Start attempt",
+        buttonSound = "accept",
+        callback = function(def, npcId)
+          if addon and addon.AttemptActivate then
+            addon.AttemptActivate(def.achId, "npc:" .. tostring(npcId), nil)
+          end
+          return false
+        end,
+      },
+    },
+    customIsCompleted = function()
+      if not addon or not addon.GetProgress then
+        return false
+      end
+      local p = addon.GetProgress("CUSTOM-ATTEMPT-FALL-DAMAGE-5PC") or {}
+      local done = tonumber(p.fallSuccessCount) or 0
+      return done >= 3
+    end,
   },
 
   -- Example 2b: target a specific player by name (string targetNpcId)
@@ -73,11 +164,11 @@ local CustomAchievements = {
       npcId = 1402,
       window = {
         title = "Topper McNabb",
-        text = "Could ye spare some coin? 5 {gold} should do it.\n\nI will gladly pay you Tuesday for a hamburger today.",
+        text = "Could ye spare some coin? 2 {gold} should do it.\n\nI will gladly pay you Tuesday for a hamburger today.",
         buttonLabel = "Give him the money",
         callback = function()
           local money = GetMoney and GetMoney() or 0
-          local hasGold = money >= 50000 -- 5 gold in copper
+          local hasGold = money >= 20000 -- 5 gold in copper
           if hasGold then
             if addon and addon._cgaPlayWindowSound then addon._cgaPlayWindowSound("coins") end
             local c = ChatTypeInfo and ChatTypeInfo.SAY
@@ -108,7 +199,33 @@ local CustomAchievements = {
     },
     checkInteractDistance = true,
   },
-  
+
+  -- Example 5: complete all those achievements 
+  {
+    achId = "CUSTOM-COMBO-001",
+    title = "Complete those 5 achievements",
+    tooltip = "You have completed 5 achievements.",
+    icon = 236685,
+    points = 0,
+    level = 50,
+    achiIds = {
+      "CUSTOM-EMOTE-HELLO-GUARD",
+      "CUSTOM-KILL-RAT-4075",
+      "CUSTOM-TARGET-PLAYER-NIGHTGLIMMER",
+      "CUSTOM-BUY-BREAD-THOMAS-MILLER-3518",
+      "CUSTOM-SPEND-GOLD-TOPPER-1402",
+    },
+  },
+  -- Example 6: complete any 5 achievements
+  {
+    achId = "CUSTOM-COMBO-002",
+    title = "Achievement Hunter I",
+    tooltip = "Complete any 5 achievements.",
+    icon = 134321,
+    points = 0,
+    level = 50,
+    nbAchis = 5,
+  },
 }
 
 -- Enable requiredTarget auto-discovery from target changes (shared utility).

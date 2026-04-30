@@ -36,6 +36,8 @@ local function ExtractAchievementData(data)
         requiredItems = nil,
         itemOrder = nil,
         requiredAchievements = nil,
+        achiIds = nil,
+        nbAchis = nil,
         achievementOrder = nil,
         secretPoints = nil
     }
@@ -97,6 +99,8 @@ local function ExtractAchievementData(data)
     result.requiredItems = getValue("requiredItems")
     result.itemOrder = getValue("itemOrder")
     result.requiredAchievements = getValue("requiredAchievements")
+    result.achiIds = getValue("achiIds")
+    result.nbAchis = getValue("nbAchis")
     result.achievementOrder = getValue("achievementOrder")
     
     return result
@@ -446,6 +450,46 @@ local function ShowMetaAchievementRequirements(requiredAchievements, achievement
     end
 end
 
+local function ShowNbAchisProgress(currentAchId, nbAchis, achievementCompleted)
+    local needed = tonumber(nbAchis) or 0
+    if needed <= 0 then
+        return
+    end
+
+    local rows = (addon and addon.AchievementRowModel) or {}
+    local excludeKey = currentAchId and tostring(currentAchId) or nil
+    local completedCount = 0
+    local seen = {}
+    for _, r in ipairs(rows) do
+        local rid = r and (r.id or r.achId)
+        local key = rid and tostring(rid) or nil
+        if key and key ~= excludeKey and not seen[key] then
+            seen[key] = true
+            local done = false
+            if r.completed then
+                done = true
+            elseif addon and addon.GetCharDB then
+                local _, cdb = addon.GetCharDB()
+                local rec = cdb and cdb.achievements and cdb.achievements[key]
+                if rec and rec.completed then
+                    done = true
+                end
+            end
+            if done then
+                completedCount = completedCount + 1
+            end
+        end
+    end
+
+    GameTooltip:AddLine("\nAchievements Completed:", 0, 1, 0)
+    local txt = tostring(completedCount) .. "/" .. tostring(needed)
+    if achievementCompleted or completedCount >= needed then
+        GameTooltip:AddLine(txt, 1, 1, 1)
+    else
+        GameTooltip:AddLine(txt, 0.5, 0.5, 0.5)
+    end
+end
+
 local function ShowExplorationRequirements(explorationZone)
     if not explorationZone or not addon or type(addon.GetZoneDiscoveryDetails) ~= "function" then
         return
@@ -494,6 +538,8 @@ local function ShowAchievementTooltip(frame, data)
     local requiredItems = extracted.requiredItems
     local itemOrder = extracted.itemOrder
     local requiredAchievements = extracted.requiredAchievements
+    local achiIds = extracted.achiIds
+    local nbAchis = extracted.nbAchis
     local achievementOrder = extracted.achievementOrder
     local explorationZone = nil
     
@@ -646,6 +692,12 @@ local function ShowAchievementTooltip(frame, data)
         if achDef.requiredAchievements then
             requiredAchievements = achDef.requiredAchievements
         end
+        if achDef.achiIds then
+            achiIds = achDef.achiIds
+        end
+        if achDef.nbAchis ~= nil then
+            nbAchis = achDef.nbAchis
+        end
         if achDef.achievementOrder then
             achievementOrder = achDef.achievementOrder
         end
@@ -674,6 +726,12 @@ local function ShowAchievementTooltip(frame, data)
         if def.requiredAchievements then
             requiredAchievements = def.requiredAchievements
         end
+        if def.achiIds then
+            achiIds = def.achiIds
+        end
+        if def.nbAchis ~= nil then
+            nbAchis = def.nbAchis
+        end
         if def.achievementOrder then
             achievementOrder = def.achievementOrder
         end
@@ -699,6 +757,13 @@ local function ShowAchievementTooltip(frame, data)
         achievementCompleted,
         useZoneListHeader and "\nRequired Zones:" or nil
     )
+    ShowMetaAchievementRequirements(
+        achiIds,
+        nil,
+        achievementCompleted,
+        "\nRequired Achievements:"
+    )
+    ShowNbAchisProgress(achId, nbAchis, achievementCompleted)
 
     -- Show exploration subzone requirements if available
     ShowExplorationRequirements(explorationZone)

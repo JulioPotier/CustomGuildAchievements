@@ -252,12 +252,12 @@ local function CheckAndPrintEligibilityMessages(mapId, entryData)
 
     local title = c.achDef.title or c.achDef.mapName or "Unknown"
     if isEligible then
-      print("|cff008066[Hardcore Achievements]|r |cff00ff00Group is eligible for achievement: " .. title .. "|r. If any player levels beyond the achievement's allowed level while inside the dungeon, they must remain inside the dungeon to remain eligible.")
+      print("|cff008066[Custom Guild Achievements]|r |cff00ff00Group is eligible for achievement: " .. title .. "|r. If any player levels beyond the achievement's allowed level while inside the dungeon, they must remain inside the dungeon to remain eligible.")
         if addon.EventLogAdd then
             addon.EventLogAdd("Dungeon entered: group is |cff00ff00eligible|r for achievement: " .. title .. " (" .. tostring(c.achId) .. ")")
         end
     else
-        print("|cff008066[Hardcore Achievements]|r |cffff0000Group is not eligible for achievement: " .. title .. "|r")
+        print("|cff008066[Custom Guild Achievements]|r |cffff0000Group is not eligible for achievement: " .. title .. "|r")
         if addon.EventLogAdd then
             addon.EventLogAdd("Dungeon entered: group is |cffff0000not eligible|r for achievement: " .. title .. " (" .. tostring(c.achId) .. ")")
         end
@@ -1149,7 +1149,7 @@ local function registerDungeonAchievement(def)
       local isStillAvailable = not state.completed and not (progress and progress.failed)
       if isStillAvailable and addon and addon.DungeonKillPrintedForGUID ~= destGUID then
         addon.DungeonKillPrintedForGUID = destGUID
-        print("|cff008066[Hardcore Achievements]|r |cffffd100" .. GetBossName(npcId) .. " killed but group is ineligible - kill not counted for achievement: " .. title .. "|r")
+        print("|cff008066[Custom Guild Achievements]|r |cffffd100" .. GetBossName(npcId) .. " killed but group is ineligible - kill not counted for achievement: " .. title .. "|r")
         if addon.EventLogAdd then
           addon.EventLogAdd("Boss kill not counted (group ineligible): " .. GetBossName(npcId) .. " (npc " .. tostring(npcId) .. ") — " .. title .. " [" .. tostring(achId) .. "]")
         end
@@ -1165,7 +1165,7 @@ local function registerDungeonAchievement(def)
     -- Only print for the first eligible variation (processKill iterates base then Trio, Duo, Solo)
     if addon and addon.DungeonKillPrintedForGUID ~= destGUID then
         addon.DungeonKillPrintedForGUID = destGUID
-        print("|cff008066[Hardcore Achievements]|r |cffffd100" .. GetBossName(npcId) .. " killed as part of achievement: " .. title .. "|r")
+        print("|cff008066[Custom Guild Achievements]|r |cffffd100" .. GetBossName(npcId) .. " killed as part of achievement: " .. title .. "|r")
         if addon.EventLogAdd then
           addon.EventLogAdd("Boss kill counted toward dungeon achievement: " .. GetBossName(npcId) .. " (npc " .. tostring(npcId) .. ") — " .. title .. " [" .. tostring(achId) .. "]")
         end

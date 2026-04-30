@@ -209,20 +209,20 @@ local function ProcessDeleteAchievementCommand(payload, sender)
     -- Check if target character matches current player
     local currentCharacter = UnitName("player")
     if payload.targetCharacter ~= currentCharacter then
-        SendResponseToAdmin(sender, "|cffff0000[Hardcore Achievements]|r Delete achievement command rejected: Target character mismatch")
+        SendResponseToAdmin(sender, "|cffff0000[Custom Guild Achievements]|r Delete achievement command rejected: Target character mismatch")
         return false
     end
     
     -- Find the achievement row
     local achievementRow = FindAchievementRow(payload.achievementId)
     if not achievementRow then
-        SendResponseToAdmin(sender, "|cffff0000[Hardcore Achievements]|r Delete achievement command rejected: Achievement not found")
+        SendResponseToAdmin(sender, "|cffff0000[Custom Guild Achievements]|r Delete achievement command rejected: Achievement not found")
         return false
     end
     
     local _, cdb = addon.GetCharDB()
     if not cdb then
-        SendResponseToAdmin(sender, "|cffff0000[Hardcore Achievements]|r Failed to delete achievement: Database not initialized")
+        SendResponseToAdmin(sender, "|cffff0000[Custom Guild Achievements]|r Failed to delete achievement: Database not initialized")
         return false
     end
     
@@ -319,7 +319,7 @@ local function ProcessDeleteAchievementCommand(payload, sender)
         table_remove(addon.HardcoreAchievementsDB.adminCommands, 1)
     end
     
-    SendResponseToAdmin(sender, "|cff00ff00[Hardcore Achievements]|r Achievement '" .. payload.achievementId .. "' deleted successfully")
+    SendResponseToAdmin(sender, "|cff00ff00[Custom Guild Achievements]|r Achievement '" .. payload.achievementId .. "' deleted successfully")
     return true
 end
 
@@ -327,19 +327,19 @@ end
 local function ProcessClearDeletedByAdminCommand(payload, sender)
     local currentCharacter = UnitName("player")
     if payload.targetCharacter ~= currentCharacter then
-        SendResponseToAdmin(sender, "|cffff0000[Hardcore Achievements]|r Unban command rejected: Target character mismatch")
+        SendResponseToAdmin(sender, "|cffff0000[Custom Guild Achievements]|r Unban command rejected: Target character mismatch")
         return false
     end
 
     local achievementId = payload.achievementId and tostring(payload.achievementId):trim()
     if not achievementId or achievementId == "" then
-        SendResponseToAdmin(sender, "|cffff0000[Hardcore Achievements]|r Unban command rejected: Achievement ID required")
+        SendResponseToAdmin(sender, "|cffff0000[Custom Guild Achievements]|r Unban command rejected: Achievement ID required")
         return false
     end
 
     local _, cdb = addon.GetCharDB()
     if not cdb then
-        SendResponseToAdmin(sender, "|cffff0000[Hardcore Achievements]|r Failed to unban: Database not initialized")
+        SendResponseToAdmin(sender, "|cffff0000[Custom Guild Achievements]|r Failed to unban: Database not initialized")
         return false
     end
 
@@ -348,10 +348,10 @@ local function ProcessClearDeletedByAdminCommand(payload, sender)
     cdb.deletedByAdmin[achievementId] = nil
 
     if hadEntry then
-        SendResponseToAdmin(sender, "|cff00ff00[Hardcore Achievements]|r Achievement '" .. achievementId .. "' unbanned for " .. currentCharacter .. " - player can earn again")
-        --print("|cff00ff00[Hardcore Achievements]|r Achievement '" .. achievementId .. "' has been unbanned - you can earn it again")
+        SendResponseToAdmin(sender, "|cff00ff00[Custom Guild Achievements]|r Achievement '" .. achievementId .. "' unbanned for " .. currentCharacter .. " - player can earn again")
+        --print("|cff00ff00[Custom Guild Achievements]|r Achievement '" .. achievementId .. "' has been unbanned - you can earn it again")
     else
-        SendResponseToAdmin(sender, "|CFFFFD100[Hardcore Achievements]|r Achievement '" .. achievementId .. "' was not banned for " .. currentCharacter)
+        SendResponseToAdmin(sender, "|CFFFFD100[Custom Guild Achievements]|r Achievement '" .. achievementId .. "' was not banned for " .. currentCharacter)
     end
 
     return true
@@ -363,7 +363,7 @@ local function ProcessClearSecretKeyCommand(payload, sender)
     -- Check if target character matches current player
     local currentCharacter = UnitName("player")
     if payload.targetCharacter ~= currentCharacter then
-        SendResponseToAdmin(sender, "|cffff0000[Hardcore Achievements]|r Clear key command rejected: Target character mismatch")
+        SendResponseToAdmin(sender, "|cffff0000[Custom Guild Achievements]|r Clear key command rejected: Target character mismatch")
         return false
     end
     
@@ -399,14 +399,14 @@ local function ProcessClearSecretKeyCommand(payload, sender)
         end
         
         if hadKey then
-            SendResponseToAdmin(sender, "|cff00ff00[Hardcore Achievements]|r Secret key cleared successfully for " .. currentCharacter)
-            print("|cffff0000[Hardcore Achievements]|r Your admin secret key has been cleared by the admin. This is intentional, to prevent you from receiving admin commands unless you set another key.")
+            SendResponseToAdmin(sender, "|cff00ff00[Custom Guild Achievements]|r Secret key cleared successfully for " .. currentCharacter)
+            print("|cffff0000[Custom Guild Achievements]|r Your admin secret key has been cleared by the admin. This is intentional, to prevent you from receiving admin commands unless you set another key.")
         else
-            SendResponseToAdmin(sender, "|CFFFFD100[Hardcore Achievements]|r Secret key was not set for " .. currentCharacter .. " (already cleared)")
+            SendResponseToAdmin(sender, "|CFFFFD100[Custom Guild Achievements]|r Secret key was not set for " .. currentCharacter .. " (already cleared)")
         end
         return true
     else
-        SendResponseToAdmin(sender, "|cffff0000[Hardcore Achievements]|r Failed to clear secret key: Database not initialized")
+        SendResponseToAdmin(sender, "|cffff0000[Custom Guild Achievements]|r Failed to clear secret key: Database not initialized")
         return false
     end
 end
@@ -417,7 +417,7 @@ local function ProcessAdminCommand(payload, sender)
         -- Validate the payload (includes secret key verification)
         local isValid, reason = ValidatePayload(payload, sender)
         if not isValid then
-            SendResponseToAdmin(sender, "|cffff0000[Hardcore Achievements]|r Delete achievement command rejected: " .. reason)
+            SendResponseToAdmin(sender, "|cffff0000[Custom Guild Achievements]|r Delete achievement command rejected: " .. reason)
             return false
         end
         
@@ -429,7 +429,7 @@ local function ProcessAdminCommand(payload, sender)
     if payload.commandType == "clear_deleted_by_admin" then
         local isValid, reason = ValidatePayload(payload, sender)
         if not isValid then
-            SendResponseToAdmin(sender, "|cffff0000[Hardcore Achievements]|r Unban command rejected: " .. reason)
+            SendResponseToAdmin(sender, "|cffff0000[Custom Guild Achievements]|r Unban command rejected: " .. reason)
             return false
         end
         return ProcessClearDeletedByAdminCommand(payload, sender)
@@ -445,10 +445,10 @@ local function ProcessAdminCommand(payload, sender)
             -- But if it fails for other reasons (invalid hash, etc.), reject it
             if reason == "Admin secret key not configured" then
                 -- Key is already cleared, return success (idempotent operation)
-                SendResponseToAdmin(sender, "|CFFFFD100[Hardcore Achievements]|r Secret key was already cleared for " .. payload.targetCharacter)
+                SendResponseToAdmin(sender, "|CFFFFD100[Custom Guild Achievements]|r Secret key was already cleared for " .. payload.targetCharacter)
                 return true
             else
-                SendResponseToAdmin(sender, "|cffff0000[Hardcore Achievements]|r Clear key command rejected: " .. reason)
+                SendResponseToAdmin(sender, "|cffff0000[Custom Guild Achievements]|r Clear key command rejected: " .. reason)
                 return false
             end
         end
@@ -460,21 +460,21 @@ local function ProcessAdminCommand(payload, sender)
     -- SECURITY: Validate the payload (includes secret key verification)
     local isValid, reason = ValidatePayload(payload, sender)
     if not isValid then
-        SendResponseToAdmin(sender, "|cffff0000[Hardcore Achievements]|r Admin command rejected: " .. reason)
+        SendResponseToAdmin(sender, "|cffff0000[Custom Guild Achievements]|r Admin command rejected: " .. reason)
         return false
     end
     
     -- Check if target character matches current player
     local currentCharacter = UnitName("player")
     if payload.targetCharacter ~= currentCharacter then
-        SendResponseToAdmin(sender, "|cffff0000[Hardcore Achievements]|r Admin command rejected: Target character mismatch")
+        SendResponseToAdmin(sender, "|cffff0000[Custom Guild Achievements]|r Admin command rejected: Target character mismatch")
         return false
     end
     
     -- Find the achievement row
     local achievementRow = FindAchievementRow(payload.achievementId)
     if not achievementRow then
-        SendResponseToAdmin(sender, "|cffff0000[Hardcore Achievements]|r Admin command rejected: Achievement not found")
+        SendResponseToAdmin(sender, "|cffff0000[Custom Guild Achievements]|r Admin command rejected: Achievement not found")
         return false
     end
     
@@ -539,11 +539,11 @@ local function ProcessAdminCommand(payload, sender)
 					local titleText = (achievementRow.Title and achievementRow.Title.GetText) and achievementRow.Title:GetText() or achievementRow.title or "Achievement"
 					showToast(iconTex, titleText, newPoints)
 				end
-				SendResponseToAdmin(sender, "|cff00ff00[Hardcore Achievements]|r Achievement '" .. payload.achievementId .. "' updated via admin command")
+				SendResponseToAdmin(sender, "|cff00ff00[Custom Guild Achievements]|r Achievement '" .. payload.achievementId .. "' updated via admin command")
 				return true
 			end
 		else
-			SendResponseToAdmin(sender, "|cffff0000[Hardcore Achievements]|r Admin command rejected: Achievement already completed")
+			SendResponseToAdmin(sender, "|cffff0000[Custom Guild Achievements]|r Admin command rejected: Achievement already completed")
 			return false
 		end
 	end
@@ -646,7 +646,7 @@ local function ProcessAdminCommand(payload, sender)
 		showToast(iconTex, titleText, achievementRow.points)
 	end
 	
-	SendResponseToAdmin(sender, "|cff00ff00[Hardcore Achievements]|r Achievement '" .. payload.achievementId .. "' completed via admin command")
+	SendResponseToAdmin(sender, "|cff00ff00[Custom Guild Achievements]|r Achievement '" .. payload.achievementId .. "' completed via admin command")
     
     -- Log the admin command (for audit trail)
     if not addon.HardcoreAchievementsDB.adminCommands then addon.HardcoreAchievementsDB.adminCommands = {} end
@@ -677,7 +677,7 @@ local function OnCommReceived(prefix, message, distribution, sender)
     -- Deserialize the payload
     local success, payload = AceSerialize:Deserialize(message)
     if not success then
-        SendResponseToAdmin(sender, "|cffff0000[Hardcore Achievements]|r Failed to deserialize admin command")
+        SendResponseToAdmin(sender, "|cffff0000[Custom Guild Achievements]|r Failed to deserialize admin command")
         return
     end
     
@@ -745,11 +745,35 @@ local function HandleSlashCommand(msg)
                     showTab()
                 end
             end)
-            print("|cff008066[Hardcore Achievements]|r Custom achievement tab enabled and shown")
+            print("|cff008066[Custom Guild Achievements]|r Custom achievement tab enabled and shown")
         end
     elseif command == "reset" and args[2] == "tab" then
         if addon and addon.ResetTabPosition then
             addon.ResetTabPosition()
+        end
+    elseif command == "popup" then
+        local ok = false
+        do
+            local getCharDB = addon and addon.GetCharDB
+            if type(getCharDB) == "function" then
+                local _, cdb = getCharDB()
+                if cdb then
+                    cdb.settings = cdb.settings or {}
+                    cdb.settings.initialSetupDone = false
+                    ok = true
+                end
+            end
+        end
+
+        if addon and type(addon.ShowInitialOptionsIfNeeded) == "function" then
+            addon.ShowInitialOptionsIfNeeded()
+            if ok then
+                print("|cff008066[Custom Guild Achievements]|r Initial setup popup opened (flag reset).")
+            else
+                print("|cff008066[Custom Guild Achievements]|r Initial setup popup opened.")
+            end
+        else
+            print("|cffff0000[Custom Guild Achievements]|r Initial setup popup is not available.")
         end
     elseif command == "adminkey" then
         -- SECURITY: Set admin secret key for secure command authentication
@@ -757,36 +781,36 @@ local function HandleSlashCommand(msg)
             local key = args[3]
             if #key >= 16 then
                 if SetAdminSecretKey(key) then
-                    print("|cff00ff00[Hardcore Achievements]|r Admin secret key set successfully")
-                    print("|CFFFFD100[Hardcore Achievements]|r Keep this key secret! Anyone with this key can send admin commands.")
+                    print("|cff00ff00[Custom Guild Achievements]|r Admin secret key set successfully")
+                    print("|CFFFFD100[Custom Guild Achievements]|r Keep this key secret! Anyone with this key can send admin commands.")
                     if addon and addon.UpdateKeyStatus then
                         UpdateKeyStatus()
                     end
                 else
-                    print("|cffff0000[Hardcore Achievements]|r Failed to set admin secret key")
+                    print("|cffff0000[Custom Guild Achievements]|r Failed to set admin secret key")
                 end
             else
-                print("|cffff0000[Hardcore Achievements]|r Admin secret key must be at least 16 characters long")
+                print("|cffff0000[Custom Guild Achievements]|r Admin secret key must be at least 16 characters long")
             end
         elseif args[2] == "check" then
             local key = GetAdminSecretKey()
             if key and key ~= "" then
-                print("|cff00ff00[Hardcore Achievements]|r Admin secret key is set (length: " .. #key .. ")")
+                print("|cff00ff00[Custom Guild Achievements]|r Admin secret key is set (length: " .. #key .. ")")
             else
-                print("|cffff0000[Hardcore Achievements]|r Admin secret key is NOT set")
-                print("|CFFFFD100[Hardcore Achievements]|r Use: /cga adminkey set <your-secret-key-here>")
-                print("|CFFFFD100[Hardcore Achievements]|r Key must be at least 16 characters long")
+                print("|cffff0000[Custom Guild Achievements]|r Admin secret key is NOT set")
+                print("|CFFFFD100[Custom Guild Achievements]|r Use: /cga adminkey set <your-secret-key-here>")
+                print("|CFFFFD100[Custom Guild Achievements]|r Key must be at least 16 characters long")
             end
         elseif args[2] == "clear" then
             if addon.HardcoreAchievementsDB then
                 addon.HardcoreAchievementsDB.adminSecretKey = nil
-                print("|cff00ff00[Hardcore Achievements]|r Admin secret key cleared")
+                print("|cff00ff00[Custom Guild Achievements]|r Admin secret key cleared")
                 if addon and addon.UpdateKeyStatus then
                     UpdateKeyStatus()
                 end
             end
         else
-            print("|cff00ff00[Hardcore Achievements]|r Admin key commands:")
+            print("|cff00ff00[Custom Guild Achievements]|r Admin key commands:")
             print("  |CFFFFD100/cga adminkey set <key>|r - Set admin secret key (min 16 chars)")
             print("  |CFFFFD100/cga adminkey check|r - Check if admin key is set")
             print("  |CFFFFD100/cga adminkey clear|r - Clear admin secret key")
@@ -796,33 +820,33 @@ local function HandleSlashCommand(msg)
         local subcommand = args[2] and string.lower(args[2]) or ""
         
         if not AchievementTracker then
-            print("|cff008066[Hardcore Achievements]|r Achievement tracker not loaded yet. Please wait a moment and try again, or reload your UI.")
+            print("|cff008066[Custom Guild Achievements]|r Achievement tracker not loaded yet. Please wait a moment and try again, or reload your UI.")
             return
         end
         
         if subcommand == "show" then
             if AchievementTracker.Show then
                 AchievementTracker:Show()
-                print("|cff008066[Hardcore Achievements]|r Achievement tracker shown")
+                print("|cff008066[Custom Guild Achievements]|r Achievement tracker shown")
             else
-                print("|cffff0000[Hardcore Achievements]|r Achievement tracker not initialized")
+                print("|cffff0000[Custom Guild Achievements]|r Achievement tracker not initialized")
             end
         elseif subcommand == "hide" then
             if AchievementTracker.Hide then
                 AchievementTracker:Hide()
-                print("|cff008066[Hardcore Achievements]|r Achievement tracker hidden")
+                print("|cff008066[Custom Guild Achievements]|r Achievement tracker hidden")
             else
-                print("|cffff0000[Hardcore Achievements]|r Achievement tracker not initialized")
+                print("|cffff0000[Custom Guild Achievements]|r Achievement tracker not initialized")
             end
         elseif subcommand == "toggle" then
             if AchievementTracker.Toggle then
                 AchievementTracker:Toggle()
-                print("|cff008066[Hardcore Achievements]|r Achievement tracker toggled")
+                print("|cff008066[Custom Guild Achievements]|r Achievement tracker toggled")
             else
-                print("|cffff0000[Hardcore Achievements]|r Achievement tracker not initialized")
+                print("|cffff0000[Custom Guild Achievements]|r Achievement tracker not initialized")
             end
         else
-            print("|cff008066[Hardcore Achievements]|r Tracker commands:")
+            print("|cff008066[Custom Guild Achievements]|r Tracker commands:")
             print("  |CFFFFD100/cga tracker show|r - Show the achievement tracker")
             print("  |CFFFFD100/cga tracker hide|r - Hide the achievement tracker")
             print("  |CFFFFD100/cga tracker toggle|r - Toggle the achievement tracker")
@@ -833,42 +857,43 @@ local function HandleSlashCommand(msg)
         -- if sub == "clear" then
         --     if addon.EventLogClear then
         --         addon.EventLogClear()
-        --         print("|cff008066[Hardcore Achievements]|r Event log cleared (saved log wiped).")
+        --         print("|cff008066[Custom Guild Achievements]|r Event log cleared (saved log wiped).")
         --     end
         -- elseif sub == "show" or sub == "" then
         if sub == "show" or sub == "" then
             if addon.EventLogShow then
                 addon.EventLogShow()
             else
-                print("|cffff0000[Hardcore Achievements]|r Event log is not available.")
+                print("|cffff0000[Custom Guild Achievements]|r Event log is not available.")
             end
         else
-            print("|cff008066[Hardcore Achievements]|r Event log: |CFFFFD100/cga log|r or |CFFFFD100/cga log show|r")
+            print("|cff008066[Custom Guild Achievements]|r Event log: |CFFFFD100/cga log|r or |CFFFFD100/cga log show|r")
         end
     elseif command == "debug" then
         -- Debug toggle command
         if args[2] and string.lower(args[2]) == "on" then
             SetDebugEnabled(true)
-            print("|cff008066[Hardcore Achievements]|r Debug mode enabled")
+            print("|cff008066[Custom Guild Achievements]|r Debug mode enabled")
             if addon and addon.DebugPrint then addon.DebugPrint("Debug mode is now ON - you will see debug messages") end
         elseif args[2] and string.lower(args[2]) == "off" then
             SetDebugEnabled(false)
-            print("|cff008066[Hardcore Achievements]|r Debug mode disabled")
+            print("|cff008066[Custom Guild Achievements]|r Debug mode disabled")
         else
             -- Toggle if no argument provided
             local currentState = GetDebugEnabled()
             SetDebugEnabled(not currentState)
             if not currentState then
-                print("|cff008066[Hardcore Achievements]|r Debug mode enabled")
+                print("|cff008066[Custom Guild Achievements]|r Debug mode enabled")
                 if addon and addon.DebugPrint then addon.DebugPrint("Debug mode is now ON - you will see debug messages") end
             else
-                print("|cff008066[Hardcore Achievements]|r Debug mode disabled")
+                print("|cff008066[Custom Guild Achievements]|r Debug mode disabled")
             end
         end
     else
-        print("|cff008066[Hardcore Achievements]|r Available commands:")
+        print("|cff008066[Custom Guild Achievements]|r Available commands:")
         print("  |CFFFFD100/cga show|r - Enable and show the custom achievement tab")
         print("  |CFFFFD100/cga reset tab|r - Reset the tab position to default")
+        print("  |CFFFFD100/cga popup|r - Show the initial setup popup again")
         print("  |CFFFFD100/cga tracker|r - Manage the achievement tracker")
         print("  |CFFFFD100/cga debug|r - Toggle debug mode (on/off)")
         print("  |CFFFFD100/cga log|r - Open troubleshooting event log")

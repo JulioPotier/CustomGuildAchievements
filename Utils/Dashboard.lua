@@ -953,7 +953,7 @@ local function CreateDashboardIcon(parent)
       else
         -- Chat edit box is NOT active: track/untrack achievement
         if not AchievementTracker then
-          print("|cffff0000[Hardcore Achievements]|r Achievement tracker not available. Please reload your UI (/reload).")
+          print("|cffff0000[Custom Guild Achievements]|r Achievement tracker not available. Please reload your UI (/reload).")
           return
         end
         
@@ -1385,7 +1385,7 @@ local function CreateDashboardModernRow(parent, srow)
             else
                 -- Chat edit box is NOT active: track/untrack achievement
                 if not AchievementTracker then
-                    print("|cffff0000[Hardcore Achievements]|r Achievement tracker not available. Please reload your UI (/reload).")
+                    print("|cffff0000[Custom Guild Achievements]|r Achievement tracker not available. Please reload your UI (/reload).")
                     return
                 end
                 
@@ -2640,7 +2640,7 @@ local function BuildDashboardFrame()
     -- Title text
     DashboardFrame.TitleText = titleBar:CreateFontString(nil, "OVERLAY", "GameFontHighlightHuge")
     DashboardFrame.TitleText:SetPoint("CENTER", titleBar, "CENTER", 0, 0)
-    DashboardFrame.TitleText:SetText("Hardcore Achievements Dashboard")
+    DashboardFrame.TitleText:SetText("Custom Guild Achievements Dashboard")
     DashboardFrame.TitleText:SetFont(POINTS_FONT_PATH, 20)
     DashboardFrame.TitleText:SetTextColor(0.922, 0.871, 0.761)
     

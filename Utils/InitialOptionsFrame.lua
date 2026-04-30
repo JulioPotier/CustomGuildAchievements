@@ -171,6 +171,13 @@ local function CreateInitialOptionsFrame()
     subtitleText:SetTextColor(TITLE_COLOR[1], TITLE_COLOR[2], TITLE_COLOR[3])
     subtitleText:SetText("Initial Setup Options")
 
+    -- Settings icon (guild tabard) for initial setup popup
+    local settingsIcon = frame:CreateTexture(nil, "ARTWORK")
+    settingsIcon:SetTexture("Interface\\AddOns\\CustomGuildAchievements\\Images\\tabard-guild.png")
+    settingsIcon:SetSize(96, 96)
+    settingsIcon:SetPoint("TOPRIGHT", divider, "BOTTOMRIGHT", -10, 8)
+    settingsIcon:SetAlpha(1)
+
     local anchor = subtitleText
 
     local function setCheckboxLabel(cb, text)
@@ -210,21 +217,9 @@ local function CreateInitialOptionsFrame()
         setSetting("disableScreenshots", self:GetChecked())
     end)
 
-    -- Announce achievements in guild chat
-    local announceInGuildChatCB = CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
-    announceInGuildChatCB:SetPoint("TOPLEFT", disableScreenshotsCB, "BOTTOMLEFT", 0, -10)
-    announceInGuildChatCB:SetSize(10, 10)
-    setCheckboxLabel(announceInGuildChatCB, "Announce achievements in guild chat")
-    announceInGuildChatCB:SetChecked(getSetting("announceInGuildChat", true))
-    ApplyCustomCheckboxTextures(announceInGuildChatCB)
-    AddTooltipToCheckbox(announceInGuildChatCB, "If enabled, achievements will be announced in guild chat when completed.")
-    announceInGuildChatCB:SetScript("OnClick", function(self)
-        setSetting("announceInGuildChat", self:GetChecked())
-    end)
-
     -- Show Achievements on the Character Info Panel
     local useCharacterPanelCB = CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
-    useCharacterPanelCB:SetPoint("TOPLEFT", announceInGuildChatCB, "BOTTOMLEFT", 0, -10)
+    useCharacterPanelCB:SetPoint("TOPLEFT", disableScreenshotsCB, "BOTTOMLEFT", 0, -10)
     useCharacterPanelCB:SetSize(10, 10)
     setCheckboxLabel(useCharacterPanelCB, "Show Achievements on the Character Info Panel")
     useCharacterPanelCB:SetChecked(getSetting("useCharacterPanel", true))
@@ -242,6 +237,18 @@ local function CreateInitialOptionsFrame()
         if dashboardFrame and dashboardFrame.UseCharacterPanelCheckbox then
             dashboardFrame.UseCharacterPanelCheckbox:SetChecked(isChecked)
         end
+    end)
+
+    -- Announce achievements in guild chat
+    local announceInGuildChatCB = CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
+    announceInGuildChatCB:SetPoint("TOPLEFT", useCharacterPanelCB, "BOTTOMLEFT", 0, -10)
+    announceInGuildChatCB:SetSize(10, 10)
+    setCheckboxLabel(announceInGuildChatCB, "Announce achievements in guild chat")
+    announceInGuildChatCB:SetChecked(getSetting("announceInGuildChat", true))
+    ApplyCustomCheckboxTextures(announceInGuildChatCB)
+    AddTooltipToCheckbox(announceInGuildChatCB, "If enabled, achievements will be announced in guild chat when completed.")
+    announceInGuildChatCB:SetScript("OnClick", function(self)
+        setSetting("announceInGuildChat", self:GetChecked())
     end)
 
     -- Done button

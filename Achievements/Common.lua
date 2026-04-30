@@ -278,7 +278,59 @@ function M.registerQuestAchievement(cfg)
             local _, classFile = UnitClass("player")
             if classFile ~= CLASS then return false end
         end
+        -- Chain unlock: prerequisites must be completed before this achievement can activate / record progress.
+        do
+            local def = addon and addon.AchievementDefs and addon.AchievementDefs[tostring(ACH_ID)]
+            if def and addon.IsUnlockedBy and not addon.IsUnlockedBy(def) then
+                return false
+            end
+        end
         return true
+    end
+
+    local function wipeProgressBecauseLockedNotMet()
+        local def = addon and addon.AchievementDefs and addon.AchievementDefs[tostring(ACH_ID)]
+        if not def or not addon.IsUnlockedBy or addon.IsUnlockedBy(def) then
+            return
+        end
+
+        local _, cdb = GetCharDB()
+        if not cdb or not cdb.progress then return end
+
+        local p = cdb.progress[tostring(ACH_ID)]
+        if type(p) ~= "table" then return end
+
+        -- Drop only completion-driving progress gathered while inactive.
+        p.killed = nil
+        p.quest = nil
+        p.completed = nil
+        p.counts = nil
+        p.eligibleCounts = nil
+        p.ineligibleKill = nil
+        p.pointsAtKill = nil
+        p.soloKill = nil
+        p.soloQuest = nil
+        p.levelAtKill = nil
+
+        local empty = true
+        for _, _ in pairs(p) do
+            empty = false
+            break
+        end
+
+        if empty then
+            cdb.progress[tostring(ACH_ID)] = nil
+        else
+            cdb.progress[tostring(ACH_ID)] = p
+        end
+
+        state.killed = false
+        state.quest = false
+        state.completed = false
+        state.counts = {}
+        state.eligibleCounts = {}
+
+        checkComplete()
     end
 
     local function belowMax()
@@ -657,6 +709,9 @@ function M.registerQuestAchievement(cfg)
                 end
             end
         end
+        -- If achievement is gated by unlockedBy but still has stale progress saved, strip it immediately.
+        wipeProgressBecauseLockedNotMet()
+
         topUpFromServer()
         -- Check if we have solo status from previous kills/quests and update UI
         -- Solo indicators show: requires self-found if hardcore is active, otherwise solo is allowed
@@ -792,6 +847,9 @@ function M.registerQuestAchievement(cfg)
             if state.completed or not belowMax() then
                 return false
             end
+            if not gate() then
+                return false
+            end
             
             local destId = getNpcIdFromGUID(destGUID)
             local progressTable = GetProgress()
@@ -875,7 +933,7 @@ function M.registerQuestAchievement(cfg)
                 
                 -- Only print message if the achievement is visible (not filtered out)
                 if isAchievementVisible(ACH_ID) then
-                    print("|cff008066[Hardcore Achievements]|r |cffffd100Achievement " .. (ACH_ID or "Unknown") .. " cannot be fulfilled: An ineligible player contributed.|r")
+                    print("|cff008066[Custom Guild Achievements]|r |cffffd100Achievement " .. (ACH_ID or "Unknown") .. " cannot be fulfilled: An ineligible player contributed.|r")
                 end
                 if addon.EventLogAdd then
                     addon.EventLogAdd("NPC kill not counted (ineligible group / external help): achievement " .. tostring(ACH_ID) .. ", npcId " .. tostring(destId))
@@ -1107,6 +1165,12 @@ function M.registerQuestAchievement(cfg)
         local questFunc = function(questID)
             if state.completed then
                 return false
+            end
+            do
+                local defQ = addon and addon.AchievementDefs and addon.AchievementDefs[tostring(ACH_ID)]
+                if defQ and addon.IsUnlockedBy and not addon.IsUnlockedBy(defQ) then
+                    return false
+                end
             end
             -- Check questID match first (language-independent, fast check)
             -- Ensure both are numbers for reliable comparison
@@ -1402,6 +1466,11 @@ function M.registerQuestAchievement(cfg)
     -- Register IsCompleted function in local registry
     if addon and addon.RegisterAchievementFunction then
         addon.RegisterAchievementFunction(ACH_ID, "IsCompleted", function()
+            local defPoll = addon and addon.AchievementDefs and addon.AchievementDefs[tostring(ACH_ID)]
+            if defPoll and addon.IsUnlockedBy and not addon.IsUnlockedBy(defPoll) then
+                return false
+            end
+
             if state.completed then
                 return true
             end

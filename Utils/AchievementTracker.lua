@@ -365,6 +365,37 @@ local function RestoreTrackedAchievements()
             trackedAchievements[achId] = true
         end
     end
+
+    -- Never keep completed achievements tracked after login/reload.
+    -- This also cleans stale completed IDs persisted in old tracker state.
+    local function IsAchievementCompletedById(achievementId)
+        if not achievementId then
+            return false
+        end
+        local achIdStr = tostring(achievementId)
+        local row = (addon and addon.GetAchievementRow and addon.GetAchievementRow(achievementId)) or nil
+        if row and row.completed then
+            return true
+        end
+        local getCharDB = addon and addon.GetCharDB
+        if type(getCharDB) == "function" then
+            local _, cdb = getCharDB()
+            if cdb and cdb.achievements and cdb.achievements[achIdStr] and cdb.achievements[achIdStr].completed then
+                return true
+            end
+        end
+        return false
+    end
+    local removedCompleted = false
+    for achId in pairs(trackedAchievements) do
+        if IsAchievementCompletedById(achId) then
+            trackedAchievements[achId] = nil
+            removedCompleted = true
+        end
+    end
+    if removedCompleted then
+        SaveTrackedAchievements()
+    end
     
     -- Update the tracker display (this will show it if there are tracked achievements)
     AchievementTracker:Update()
@@ -878,6 +909,8 @@ local function GetAchievementDescription(achievementId)
     local requiredItems = nil
     local itemOrder = nil
     local requiredAchievements = nil
+    local achiIds = nil
+    local nbAchis = nil
     local achievementOrder = nil
     local isContinentExploration = false
     local isRaid = false
@@ -952,6 +985,12 @@ local function GetAchievementDescription(achievementId)
         if achDef.requiredAchievements then
             requiredAchievements = achDef.requiredAchievements
         end
+        if achDef.achiIds then
+            achiIds = achDef.achiIds
+        end
+        if achDef.nbAchis ~= nil then
+            nbAchis = achDef.nbAchis
+        end
         if achDef.achievementOrder then
             achievementOrder = achDef.achievementOrder
         end
@@ -977,6 +1016,8 @@ local function GetAchievementDescription(achievementId)
             if not requiredItems and row.requiredItems then requiredItems = row.requiredItems end
             if not itemOrder and row.itemOrder then itemOrder = row.itemOrder end
             if not requiredAchievements and row.requiredAchievements then requiredAchievements = row.requiredAchievements end
+            if not achiIds and row.achiIds then achiIds = row.achiIds end
+            if nbAchis == nil and row.nbAchis ~= nil then nbAchis = row.nbAchis end
             if not achievementOrder and row.achievementOrder then achievementOrder = row.achievementOrder end
             if row._def and row._def.isRaid then isRaid = true end
             if row._def and row._def.requiredKills and not requiredKills then requiredKills = row._def.requiredKills end
@@ -988,6 +1029,12 @@ local function GetAchievementDescription(achievementId)
             end
             if row._def and row._def.requiredAchievements and not requiredAchievements then
                 requiredAchievements = row._def.requiredAchievements
+            end
+            if row._def and row._def.achiIds and not achiIds then
+                achiIds = row._def.achiIds
+            end
+            if nbAchis == nil and row._def and row._def.nbAchis ~= nil then
+                nbAchis = row._def.nbAchis
             end
             if row._def and row._def.achievementOrder and not achievementOrder then
                 achievementOrder = row._def.achievementOrder
@@ -1006,6 +1053,12 @@ local function GetAchievementDescription(achievementId)
             if row._def and row._def.requiredAchievements and not requiredAchievements then
                 requiredAchievements = row._def.requiredAchievements
             end
+            if row._def and row._def.achiIds and not achiIds then
+                achiIds = row._def.achiIds
+            end
+            if nbAchis == nil and row._def and row._def.nbAchis ~= nil then
+                nbAchis = row._def.nbAchis
+            end
             if row._def and row._def.achievementOrder and not achievementOrder then
                 achievementOrder = row._def.achievementOrder
             end
@@ -1014,6 +1067,12 @@ local function GetAchievementDescription(achievementId)
             end
             if not requiredAchievements and row.requiredAchievements then
                 requiredAchievements = row.requiredAchievements
+            end
+            if not achiIds and row.achiIds then
+                achiIds = row.achiIds
+            end
+            if nbAchis == nil and row.nbAchis ~= nil then
+                nbAchis = row.nbAchis
             end
             if not achievementOrder and row.achievementOrder then
                 achievementOrder = row.achievementOrder
@@ -1040,9 +1099,10 @@ local function GetAchievementDescription(achievementId)
     local hasContinentZoneList = isContinentExploration
         and type(requiredAchievements) == "table"
         and #requiredAchievements > 0
+    local hasDependencyList = type(achiIds) == "table" and #achiIds > 0
     
     -- For dungeon achievements, we don't need baseTooltip - only return nil if it's not a dungeon achievement and we have no tooltip
-    if not baseTooltip and not isDungeonOrRaidAchievement and not hasExplorationSubzoneList and not hasContinentZoneList then
+    if not baseTooltip and not isDungeonOrRaidAchievement and not hasExplorationSubzoneList and not hasContinentZoneList and not hasDependencyList then
         return nil
     end
     
@@ -1338,6 +1398,100 @@ local function GetAchievementDescription(achievementId)
                 description = description .. "\n|cffff4444" .. reqTitle .. "|r"
             else
                 description = description .. "\n|cff808080" .. reqTitle .. "|r"
+            end
+        end
+    end
+
+    -- Generic dependency list from achiIds (white/gray/red like meta requirements)
+    if hasDependencyList then
+        if description ~= "" then
+            description = description .. "\n\n|cff00ff00Required Achievements:|r"
+        else
+            description = "|cff00ff00Required Achievements:|r"
+        end
+
+        for _, reqAchId in ipairs(achiIds) do
+            local reqTitle = tostring(reqAchId)
+            if addon and addon.AchievementDefs then
+                local reqDef = addon.AchievementDefs[tostring(reqAchId)]
+                if reqDef and reqDef.title then
+                    reqTitle = reqDef.title
+                end
+            end
+            local reqRow = addon and addon.GetAchievementRow and addon.GetAchievementRow(reqAchId)
+            if reqTitle == tostring(reqAchId) and reqRow then
+                reqTitle = (reqRow.Title and reqRow.Title.GetText and reqRow.Title:GetText())
+                    or reqRow.title
+                    or reqTitle
+            end
+
+            local reqProgress = addon and addon.GetProgress and addon.GetProgress(reqAchId)
+            local reqCompleted = achievementCompleted or (reqProgress and reqProgress.completed)
+            if reqRow and reqRow.completed then
+                reqCompleted = true
+            end
+
+            local reqFailed = false
+            if not reqCompleted and addon and addon.IsRowOutleveled and reqRow and addon.IsRowOutleveled(reqRow) then
+                reqFailed = true
+            end
+            if not reqFailed and not reqCompleted and not reqRow and addon and addon.GetCharDB then
+                local _, cdb = addon.GetCharDB()
+                local rec = cdb and cdb.achievements and cdb.achievements[tostring(reqAchId)]
+                if rec and rec.failed then
+                    reqFailed = true
+                end
+            end
+
+            if reqCompleted then
+                description = description .. "\n|cffffffff" .. reqTitle .. "|r"
+            elseif reqFailed then
+                description = description .. "\n|cffff4444" .. reqTitle .. "|r"
+            else
+                description = description .. "\n|cff808080" .. reqTitle .. "|r"
+            end
+        end
+    end
+
+    -- Generic completion count trigger: nbAchis = N (any achievements).
+    if nbAchis ~= nil then
+        local needed = tonumber(nbAchis) or 0
+        if needed > 0 then
+            local completedCount = 0
+            local rows = (addon and addon.AchievementRowModel) or {}
+            local excludeKey = tostring(achievementId)
+            local seen = {}
+            for _, r in ipairs(rows) do
+                local rid = r and (r.id or r.achId)
+                local key = rid and tostring(rid) or nil
+                if key and key ~= excludeKey and not seen[key] then
+                    seen[key] = true
+                    local done = false
+                    if r.completed then
+                        done = true
+                    elseif addon and addon.GetCharDB then
+                        local _, cdb = addon.GetCharDB()
+                        local rec = cdb and cdb.achievements and cdb.achievements[key]
+                        if rec and rec.completed then
+                            done = true
+                        end
+                    end
+                    if done then
+                        completedCount = completedCount + 1
+                    end
+                end
+            end
+
+            if description ~= "" then
+                description = description .. "\n\n|cff00ff00Achievements Completed:|r"
+            else
+                description = "|cff00ff00Achievements Completed:|r"
+            end
+            local progressText = tostring(completedCount) .. "/" .. tostring(needed)
+            if achievementCompleted or completedCount >= needed then
+                description = description .. "\n|cffffffff" .. progressText .. "|r"
+            else
+                description = description .. "\n|cff808080" .. progressText .. "|r"
             end
         end
     end
@@ -1683,10 +1837,74 @@ local function GetAchievementLine(self, index)
     return achievementLines[index]
 end
 
+-- Normalize string/number WoW vs custom id keys in trackedAchievements (stored key can differ).
+local function ForEachTrackedKeyVariant(achievementId)
+    local variants = {}
+    local seen = {}
+    local function add(k)
+        if k == nil then return end
+        if not seen[k] then
+            seen[k] = true
+            table_insert(variants, k)
+        end
+    end
+    add(achievementId)
+    add(tostring(achievementId))
+    local n = tonumber(achievementId)
+    if n then add(n) end
+    local n2 = tonumber(tostring(achievementId))
+    if n2 and n2 ~= n then add(n2) end
+    return variants
+end
+
+local function TrackedEntryExists(achievementId)
+    for _, k in ipairs(ForEachTrackedKeyVariant(achievementId)) do
+        if trackedAchievements[k] ~= nil then
+            return true
+        end
+    end
+    return false
+end
+
 -- Update the tracker display
 local function Update(self)
     if not isInitialized then
         return
+    end
+
+    -- Remove stale entries completed through any completion path (defensive prune).
+    do
+        local pruned = false
+        local getCharDB = addon and addon.GetCharDB
+        local cdb = nil
+        if type(getCharDB) == "function" then
+            local _
+            _, cdb = getCharDB()
+        end
+        for aid, _ in pairs(trackedAchievements) do
+            local remove = false
+            local row = addon.GetAchievementRow and (addon.GetAchievementRow(aid) or addon.GetAchievementRow(tostring(aid)))
+            if row and row.completed then
+                remove = true
+            elseif cdb and cdb.achievements then
+                local rec = cdb.achievements[tostring(aid)]
+                if rec and rec.completed then
+                    remove = true
+                else
+                    local naid = tonumber(aid)
+                    if naid and cdb.achievements[naid] and cdb.achievements[naid].completed then
+                        remove = true
+                    end
+                end
+            end
+            if remove then
+                trackedAchievements[aid] = nil
+                pruned = true
+            end
+        end
+        if pruned then
+            SaveTrackedAchievements()
+        end
     end
 
     -- Count tracked achievements
@@ -1837,7 +2055,7 @@ local function Update(self)
                 -- Get achievement status (Completed, Failed, Pending Turn-In)
                 local statusText, statusColor = GetAchievementStatus(achievementId)
 
-                -- Attempt timer (opt-in): show remaining time and auto-fail at 0.
+                -- Attempt system (opt-in): show status + optional timer, and keep UI refreshed while active.
                 do
                     local row = addon and addon.GetAchievementRow and addon.GetAchievementRow(achievementId)
                     local def = (row and row._def) or (addon and addon.AchievementDefs and addon.AchievementDefs[tostring(achievementId)]) or nil
@@ -1852,13 +2070,40 @@ local function Update(self)
                         end
                     end
 
+                    -- Show fall-attempt progress (Leap of Faith style) even after completion,
+                    -- so the "best fall %" remains visible in the tracker.
+                    if def and def.requiredFallHpLossPct and tonumber(def.attemptsAllowed) and tonumber(def.attemptsAllowed) > 0
+                        and addon then
+                        local p = addon.GetProgress and addon.GetProgress(achievementId) or nil
+                        local best = tonumber(p and p.maxFallHpLossPct) or 0
+                        local done = tonumber(p and p.fallSuccessCount) or 0
+                        local total = tonumber(def.attemptsAllowed) or 0
+
+                        -- Fallback after completion: progress may be cleared; read persisted summary from achievements record.
+                        if (best <= 0 and done <= 0) and addon.GetCharDB then
+                            local _, cdb = addon.GetCharDB()
+                            local rec = cdb and cdb.achievements and cdb.achievements[tostring(achievementId)] or nil
+                            best = tonumber(rec and rec.maxFallHpLossPct) or best
+                            done = tonumber(rec and rec.fallSuccessCount) or done
+                            total = tonumber(rec and rec.attemptsAllowed) or total
+                        end
+
+                        statusText = (statusText or "") .. " |cff88ccff[" .. done .. "/" .. total .. " best " .. string.format("%.1f", best) .. "%%]|r"
+                    end
+
+                    -- Attempt status/timer is only relevant while not completed.
                     if (not isCompleted) and def and def.attemptEnabled and addon and addon.GetProgress and addon.AttemptFail then
                         local p = addon.GetProgress(achievementId) or {}
                         local a = p and p.attempt
                         local isActive = type(a) == "table" and a.active == true
+
                         if not isActive then
                             statusText = (statusText or "") .. " |cffff8800[not started]|r"
                         else
+                            -- IMPORTANT: refresh the tracker while an attempt is active even without a timerSet,
+                            -- otherwise progress counters (e.g. fallSuccessCount) won't update live.
+                            anyActiveAttemptTimer = true
+
                             local timerSet = tonumber(a.timerSet) or tonumber(def.timerSet) or nil
                             local startedAt = tonumber(a.startedAt) or nil
                             if timerSet and timerSet > 0 and startedAt then
@@ -1866,7 +2111,6 @@ local function Update(self)
                                 if remaining <= 0 then
                                     addon.AttemptFail(achievementId, "timer", time())
                                 else
-                                    anyActiveAttemptTimer = true
                                     local remText = FormatSecondsMMSS(remaining)
                                     statusText = (statusText or "") .. " |cff00ff00(" .. remText .. ")|r"
                                 end
@@ -2195,10 +2439,11 @@ local function TrackAchievement(self, achievementId, title)
             end
         end
         if isCompleted then
-            -- If it was tracked before, clear it now.
-            if trackedAchievements[achIdStr] ~= nil or trackedAchievements[achievementId] ~= nil then
-                trackedAchievements[achIdStr] = nil
-                trackedAchievements[achievementId] = nil
+            -- If it was tracked before, clear it now (all possible key variants).
+            if TrackedEntryExists(achievementId) then
+                for _, k in ipairs(ForEachTrackedKeyVariant(achievementId)) do
+                    trackedAchievements[k] = nil
+                end
                 SaveTrackedAchievements()
                 Update(self)
             end
@@ -2212,16 +2457,23 @@ local function TrackAchievement(self, achievementId, title)
         count = count + 1
     end
 
-    if count >= 10 and not trackedAchievements[achievementId] then
-        print("|cff008066[Hardcore Achievements]|r You may only track 10 achievements at a time.")
+    if count >= 10 and not TrackedEntryExists(achievementId) then
+        print("|cff008066[Custom Guild Achievements]|r You may only track 10 achievements at a time.")
         return
     end
 
     -- Store achievement data (title for custom achievements)
+    local storeKey = tostring(achievementId)
     if title then
-        trackedAchievements[achievementId] = { title = title }
+        trackedAchievements[storeKey] = { title = title }
     else
-        trackedAchievements[achievementId] = true
+        trackedAchievements[storeKey] = true
+    end
+    -- Remove duplicate stale keys for same id (string vs number variants)
+    for _, k in ipairs(ForEachTrackedKeyVariant(achievementId)) do
+        if k ~= storeKey then
+            trackedAchievements[k] = nil
+        end
     end
     
     -- Save to database
@@ -2232,9 +2484,14 @@ end
 
 -- Public API: Remove achievement from tracker
 local function UntrackAchievement(self, achievementId)
-    if trackedAchievements[achievementId] then
-        trackedAchievements[achievementId] = nil
-        -- Save to database
+    local removed = false
+    for _, k in ipairs(ForEachTrackedKeyVariant(achievementId)) do
+        if trackedAchievements[k] ~= nil then
+            trackedAchievements[k] = nil
+            removed = true
+        end
+    end
+    if removed then
         SaveTrackedAchievements()
         Update(self)
     end
@@ -2242,7 +2499,7 @@ end
 
 -- Public API: Check if achievement is tracked
 local function IsTracked(self, achievementId)
-    return trackedAchievements[achievementId] ~= nil
+    return TrackedEntryExists(achievementId)
 end
 
 -- Public API: Get all tracked achievements
@@ -2297,6 +2554,56 @@ local function SetLocked(self, locked)
     end
 end
 
+-- completedPrereqId = id of achievement just completed (fast path). nil = full scan (ApplyFilter / login).
+local function DefReferencesUnlockedPrereq(def, completedPrereqId)
+    if not def or not completedPrereqId then return false end
+    local dep = def.unlockedBy
+    if dep == nil then return false end
+    local cid = tostring(completedPrereqId)
+    if type(dep) == "string" then
+        return tostring(dep) == cid
+    end
+    if type(dep) == "table" then
+        for _, id in ipairs(dep) do
+            if tostring(id) == cid then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- Auto-track any definition with unlockedBy once all prereqs are satisfied (IsUnlockedBy).
+local function AutoTrackUnlockedByDependents(self, completedPrereqId)
+    if not AchievementTracker or type(AchievementTracker.TrackAchievement) ~= "function" then return end
+    if not addon or not addon.AchievementDefs then return end
+    if completedPrereqId == nil then
+        if not (addon.IsUnlockedBy and type(addon.IsUnlockedBy) == "function") then
+            return
+        end
+    end
+
+    for succIdRaw, succDef in pairs(addon.AchievementDefs) do
+        if succDef and succDef.unlockedBy then
+            if completedPrereqId ~= nil and not DefReferencesUnlockedPrereq(succDef, completedPrereqId) then
+                -- another chain / not this trigger
+            else
+                local ok = true
+                if addon.IsUnlockedBy and type(addon.IsUnlockedBy) == "function" then
+                    ok = addon.IsUnlockedBy(succDef)
+                end
+                if ok then
+                    local succId = succDef.achId or succIdRaw
+                    local title = succDef.title or tostring(succId)
+                    pcall(function()
+                        AchievementTracker:TrackAchievement(succId, title)
+                    end)
+                end
+            end
+        end
+    end
+end
+
 -- Hook into achievement refresh functions to update tracker status
 local function HookAchievementRefresh()
     -- Store original function
@@ -2311,13 +2618,12 @@ local function HookAchievementRefresh()
                 -- Get achievement ID from row
                 local achId = row.achId or row.id
 
-                -- Auto-untrack completed achievements and persist removal.
+                -- Retrait immédiat du complété pour libérer un slot puis auto-track tous les unlockedBy suivants.
                 if achId and AchievementTracker and AchievementTracker.UntrackAchievement then
-                    local achKey = tostring(achId)
-                    if trackedAchievements[achKey] ~= nil then
-                        AchievementTracker:UntrackAchievement(achKey)
-                    end
+                    AchievementTracker:UntrackAchievement(achId)
                 end
+
+                AchievementTracker:AutoTrackUnlockedByDependents(achId)
                 
                 -- Update tracker when any achievement is completed
                 if achId and AchievementTracker and AchievementTracker.Update then
@@ -2354,10 +2660,7 @@ local function HookAchievementRefresh()
                 or key == "talkedTo"
             if achId and progressAffectsDisplay then
                 local achIdStr = tostring(achId)
-                local achIdNum = tonumber(achIdStr)
-                
-                -- Check if this achievement is tracked (handle both string and numeric keys)
-                local isTracked = trackedAchievements[achIdStr] ~= nil or (achIdNum and trackedAchievements[achIdNum] ~= nil)
+                local isTracked = TrackedEntryExists(achId)
                 
                 if isTracked then
                     -- Mark this achievement for update
@@ -2489,6 +2792,12 @@ local function RestoreOnLogin()
         RestoreTrackedAchievements()
         -- Prune any tracked IDs that no longer exist after the catalog finished loading.
         PruneMissingTrackedAchievementsOnce()
+        -- unlockedBy: track eligible successors even if the achievement window never opened (ApplyFilter).
+        C_Timer.After(1.5, function()
+            if AchievementTracker and AchievementTracker.AutoTrackUnlockedByDependents then
+                AchievementTracker:AutoTrackUnlockedByDependents(nil)
+            end
+        end)
     end
 end
 
@@ -2525,6 +2834,7 @@ AchievementTracker.Toggle = Toggle
 AchievementTracker.Expand = Expand
 AchievementTracker.Collapse = Collapse
 AchievementTracker.SetLocked = SetLocked
+AchievementTracker.AutoTrackUnlockedByDependents = AutoTrackUnlockedByDependents
 
 if addon then
 	addon.AchievementTracker = AchievementTracker
