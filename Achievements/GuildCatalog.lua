@@ -145,7 +145,7 @@ GuildAchievements = {
   },
   -- // Attempt: no mount / druid forms / hunter aspects / ghost wolf when flags are set (each optional)
   {
-    achId = "GUILD-ATTEMPT-NEVER-FAST",
+    achId = "GUILD-ATTEMPT-NEVER-FASTERRR",
     title = "The Saddle Is Lava",
     tooltip = "Talk to any Stormwind Guard to start your vow. Then head to King Magni Bronzebeard in Ironforge without shortcut movement.\n\nWhile the attempt is active: you must stay in walk (no run toggle). Mounting, Cat Form, Travel Form, hunter Cheetah/Pack aspects, or Ghost Wolf fail the achievement (each controlled by its own flag). Potions, gear and passive talents do not.",
     icon = 132261,
@@ -164,7 +164,7 @@ GuildAchievements = {
         title = "The Saddle Is Lava",
         text = "Swear you will not mount, shapeshift for speed, use hunter running aspects, or Ghost Wolf — only foot travel allowed for this challenge.\n\nClick below to start your vow.",
         buttonLabel = "I swear (strict travel)",
-        buttonSound = "coins",
+        buttonSound = "accept",
         callback = function(def, npcId)
           if addon and addon.AttemptActivate then
             addon.AttemptActivate(def.achId, "npc:" .. tostring(npcId), nil)

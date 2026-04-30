@@ -317,7 +317,7 @@ local function CleanupIncorrectLevelAchievements()
     
     -- Log cleanup if any achievements were removed
     if cleanedCount > 0 then
-        local message = "|cff008066[Hardcore Achievements]|r |cffffd100Cleaned up " .. cleanedCount .. " incorrectly completed achievement(s):|r"
+        local message = "|cff008066[Custom Guild Achievements]|r |cffffd100Cleaned up " .. cleanedCount .. " incorrectly completed achievement(s):|r"
         print(message)
         for _, cleaned in ipairs(cleanedAchievements) do
             print(string_format("  |cffffd100- %s (completed at level %d, required level %d)|r", 
@@ -341,27 +341,37 @@ local function CleanupNowEligibleFailedAchievements()
 
     local playerLevel = UnitLevel("player") or 0
     local maxLevelByAchId = {}
+    local isAttemptByAchId = {}
     for _, row in ipairs(rows) do
         local id = row.id or row.achId
-        if id and row.maxLevel then
-            maxLevelByAchId[tostring(id)] = row.maxLevel
+        if id then
+            if row.maxLevel then
+                maxLevelByAchId[tostring(id)] = row.maxLevel
+            end
+            if row._def and row._def.attemptEnabled == true then
+                isAttemptByAchId[tostring(id)] = true
+            end
         end
     end
 
     local cleanedCount = 0
     for achId, rec in pairs(cdb.achievements) do
         if not rec.completed and (rec.failed or rec.failedAt) then
-            local maxLevel = maxLevelByAchId[tostring(achId)]
-            if maxLevel and playerLevel <= maxLevel then
-                rec.failed = nil
-                rec.failedAt = nil
-                cleanedCount = cleanedCount + 1
+            local achKey = tostring(achId)
+            local isAttempt = isAttemptByAchId[achKey] == true
+            if not isAttempt then
+                local maxLevel = maxLevelByAchId[achKey]
+                if maxLevel and playerLevel <= maxLevel then
+                    rec.failed = nil
+                    rec.failedAt = nil
+                    cleanedCount = cleanedCount + 1
+                end
             end
         end
     end
 
     if cleanedCount > 0 then
-        print(string_format("|cff008066[Hardcore Achievements]|r |cffffd100Unfailed %d achievement(s) that are now eligible (catalog/level change).|r", cleanedCount))
+        print(string_format("|cff008066[Custom Guild Achievements]|r |cffffd100Unfailed %d achievement(s) that are now eligible (catalog/level change).|r", cleanedCount))
     end
     return cleanedCount
 end
@@ -369,6 +379,68 @@ end
 local function ClearProgress(achId)
     local _, cdb = GetCharDB()
     if cdb and cdb.progress then cdb.progress[achId] = nil end
+end
+
+local function UnlockedByReferencesId(def, prerequisiteId)
+    if not def or prerequisiteId == nil then return false end
+    local u = def.unlockedBy
+    if u == nil then return false end
+    local pid = tostring(prerequisiteId)
+    if type(u) == "string" then
+        return tostring(u) == pid
+    end
+    if type(u) == "table" then
+        for _, id in ipairs(u) do
+            if tostring(id) == pid then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- Chain rule: kills/progress accumulated before an achievement is "active" must not count.
+-- When a prerequisite completes, wipe kill-related progress for direct successor defs that reference it in unlockedBy.
+local function ResetKillProgressForDirectUnlockedBySuccessors(completedPrereqId)
+    if not completedPrereqId then return end
+    local _, cdb = GetCharDB()
+    if not cdb or not cdb.progress then return end
+
+    local defs = addon and addon.AchievementDefs
+    if type(defs) ~= "table" then return end
+
+    for depKey, depDef in pairs(defs) do
+        if depDef and UnlockedByReferencesId(depDef, completedPrereqId) then
+            local depId = depDef.achId or depKey
+            depId = depId and tostring(depId) or nil
+            if depId then
+                local p = cdb.progress[depId]
+                if type(p) == "table" then
+                    p.killed = nil
+                    p.quest = nil
+                    p.completed = nil
+                    p.counts = nil
+                    p.eligibleCounts = nil
+                    p.ineligibleKill = nil
+                    p.pointsAtKill = nil
+                    p.soloKill = nil
+                    p.soloQuest = nil
+                    p.levelAtKill = nil
+
+                    local empty = true
+                    for _, _ in pairs(p) do
+                        empty = false
+                        break
+                    end
+                    if empty then
+                        cdb.progress[depId] = nil
+                    else
+                        cdb.progress[depId] = p
+                    end
+                end
+            end
+        end
+    end
 end
 
 -- =========================================================
@@ -703,11 +775,18 @@ local function EnsureFailureTimestamp(achId)
         rec = {}
         cdb.achievements[achId] = rec
     end
+    local wasFailed = (rec.failed == true) or (rec.failedAt ~= nil)
     if not rec.completed and not rec.failedAt then
         rec.failedAt = time()
     end
     if rec.failedAt and not rec.failed then
         rec.failed = true
+    end
+
+    -- Fire onFail once when we transition into failed via outleveling/eligibility.
+    if not rec.completed and rec.failedAt and rec.failed and not wasFailed then
+        local row = GetAchievementRowForCallback(achId)
+        FireAchievementCallback("onFail", achId, row, "outleveled", rec.failedAt)
     end
     return rec.failedAt
 end
@@ -731,6 +810,69 @@ if addon then
     addon.EnsureFailureTimestamp = EnsureFailureTimestamp
     addon.FormatTimestamp = FormatTimestamp
     addon.IsRowOutleveled = IsRowOutleveled
+end
+
+-- =========================================================
+-- Achievement callbacks (def.onSuccess / def.onFail)
+-- =========================================================
+-- Optional fields on achievement definitions:
+--   def.onSuccess = function(def, ctx) ... end
+--   def.onFail    = function(def, ctx) ... end
+-- ctx is a table with useful runtime data (best-effort):
+--   ctx.achId, ctx.row, ctx.def, ctx.reason, ctx.at (timestamp), ctx.rec, ctx.progress
+local function GetAchievementDefForCallback(achId, row)
+    if row and row._def then
+        return row._def
+    end
+    if addon and addon.AchievementDefs and achId ~= nil then
+        return addon.AchievementDefs[tostring(achId)]
+    end
+    return nil
+end
+
+local function GetAchievementRowForCallback(achId)
+    local getRow = addon and addon.GetAchievementRow
+    if type(getRow) == "function" then
+        return getRow(achId)
+    end
+    return nil
+end
+
+local function FireAchievementCallback(kind, achId, row, reason, atOverride)
+    local def = GetAchievementDefForCallback(achId, row)
+    if not def then
+        return
+    end
+    local cb = def and def[kind]
+    if type(cb) ~= "function" then
+        return
+    end
+
+    local at = atOverride or (time and time() or 0)
+    local _, cdb = GetCharDB()
+    local rec = cdb and cdb.achievements and cdb.achievements[tostring(achId)] or nil
+    local progress = cdb and cdb.progress and cdb.progress[tostring(achId)] or nil
+
+    local ctx = {
+        achId = achId,
+        row = row,
+        def = def,
+        reason = reason,
+        at = at,
+        rec = rec,
+        progress = progress,
+    }
+
+    local ok, err = pcall(cb, def, ctx)
+    if not ok then
+        if addon and addon.EventLogAdd then
+            addon.EventLogAdd("Callback error: " .. tostring(kind) .. " for " .. tostring(achId) .. " -> " .. tostring(err))
+        end
+    end
+end
+
+if addon then
+    addon._cgaFireAchievementCallback = FireAchievementCallback
 end
 
 -- Returns the list of achievement rows. Prefer model (populated at load) so tracker/dashboard work
@@ -1272,6 +1414,24 @@ local function MarkRowCompleted(row, cdbParam)
         rec.level       = UnitLevel("player") or nil
         -- Store solo status in achievement record so it persists after progress is cleared
         rec.wasSolo = wasSolo
+
+        -- Persist "attempt-style" summary values into achievements record before we clear progress.
+        -- Some achievements (e.g. fall damage attempts) store their meaningful result in progress
+        -- and would otherwise lose it after ClearProgress(id).
+        do
+            local def =
+                (row and row._def) or
+                (addon and addon.AchievementDefs and addon.AchievementDefs[tostring(id)]) or
+                nil
+            if def and def.requiredFallHpLossPct and progress then
+                rec.maxFallHpLossPct = tonumber(progress.maxFallHpLossPct) or rec.maxFallHpLossPct
+                rec.fallSuccessCount = tonumber(progress.fallSuccessCount) or rec.fallSuccessCount
+                rec.attemptsAllowed = tonumber(def.attemptsAllowed) or rec.attemptsAllowed
+            end
+        end
+
+        -- Fire per-achievement onSuccess callback before progress is cleared.
+        FireAchievementCallback("onSuccess", id, row, nil, rec.completedAt)
         -- Check if we have pointsAtKill value in progress to use those points
         local finalPoints = tonumber(row.points) or 0
 
@@ -1324,6 +1484,10 @@ local function MarkRowCompleted(row, cdbParam)
             row.Points:SetText(tostring(finalPoints))
         end
 
+        -- Achievement chains (unlockedBy): completing a prerequisite "activates" the next step.
+        -- Any kill progress saved before activation must not retroactively validate the successor.
+        ResetKillProgressForDirectUnlockedBySuccessors(id)
+
         ClearProgress(id)
         addon.UpdateTotalPoints()
         
@@ -1356,12 +1520,31 @@ local function MarkRowCompleted(row, cdbParam)
     -- Completed achievements always show "Solo", never "Solo bonus"
     local isHardcoreActive = C_GameRules and C_GameRules.IsHardcoreActive and C_GameRules.IsHardcoreActive() or false
     if row.Sub then
-        local shouldShowSolo = wasSolo and (isHardcoreActive and IsSelfFound() or not isHardcoreActive)
-        if shouldShowSolo then
-            -- Completed achievements always show "Solo", not "Solo bonus"
-            row.Sub:SetText(AUCTION_TIME_LEFT0 .. "\n" .. GetClassColor .. "Solo|r")
+        local def =
+            (row and row._def) or
+            (addon and addon.AchievementDefs and addon.AchievementDefs[tostring(id)]) or
+            nil
+
+        -- For fall-attempt achievements, show the final "best" summary after completion.
+        if def and def.requiredFallHpLossPct and addon and addon.GetCharDB then
+            local _, cdb2 = addon.GetCharDB()
+            local rec2 = cdb2 and cdb2.achievements and cdb2.achievements[tostring(id)] or nil
+            local best = tonumber(rec2 and rec2.maxFallHpLossPct) or 0
+            local done = tonumber(rec2 and rec2.fallSuccessCount) or 0
+            local total = tonumber((def and def.attemptsAllowed) or (rec2 and rec2.attemptsAllowed)) or 0
+            if total and total > 0 then
+                row.Sub:SetText(string_format("Best fall: %.1f%% (%d/%d)", best, done, total))
+            else
+                row.Sub:SetText(string_format("Best fall: %.1f%%", best))
+            end
         else
-            row.Sub:SetText(AUCTION_TIME_LEFT0)
+            local shouldShowSolo = wasSolo and (isHardcoreActive and IsSelfFound() or not isHardcoreActive)
+            if shouldShowSolo then
+                -- Completed achievements always show "Solo", not "Solo bonus"
+                row.Sub:SetText(AUCTION_TIME_LEFT0 .. "\n" .. GetClassColor .. "Solo|r")
+            else
+                row.Sub:SetText(AUCTION_TIME_LEFT0)
+            end
         end
     end
     if row.Points then row.Points:SetTextColor(0.6, 0.9, 0.6) end
@@ -1398,7 +1581,22 @@ local function MarkRowCompleted(row, cdbParam)
 	if not skipBroadcastForRetroactive then
 		local playerName = UnitName("player")
 		local achievementTitle = (row.Title and row.Title.GetText and row.Title:GetText()) or row.title or "Unknown Achievement"
-		local broadcastMessage = string_format(ACHIEVEMENT_BROADCAST, "", achievementTitle)
+        -- For attempt-based fall achievements, append the final "best fall %" to announcements.
+        local announceSuffix = ""
+        do
+            local def = row and row._def
+            if def and def.requiredFallHpLossPct and def.attemptsAllowed then
+                local _, cdb2 = GetCharDB()
+                local rec2 = cdb2 and cdb2.achievements and cdb2.achievements[tostring(row.achId or row.id or "")] or nil
+                -- Fall summary is persisted into achievements record at completion time.
+                local best = tonumber(rec2 and rec2.maxFallHpLossPct) or 0
+                if best and best > 0 then
+                    announceSuffix = " |cff88ccff(Best fall: " .. string_format("%.1f", best) .. "%%)|r"
+                end
+            end
+        end
+
+		local broadcastMessage = string_format(ACHIEVEMENT_BROADCAST, "", achievementTitle .. announceSuffix)
 		broadcastMessage = broadcastMessage:gsub("^%s+", "")
 		SendChatMessage(broadcastMessage, "EMOTE")
 
@@ -1409,7 +1607,7 @@ local function MarkRowCompleted(row, cdbParam)
 			if achIdForLink and type(getBracket) == "function" then
 				link = getBracket(achIdForLink)
 			end
-			local guildMessage = string_format(ACHIEVEMENT_BROADCAST, "", link or achievementTitle)
+			local guildMessage = string_format(ACHIEVEMENT_BROADCAST, "", (link or achievementTitle) .. announceSuffix)
 			guildMessage = guildMessage:gsub("^%s+", "")
 			SendChatMessage(guildMessage, "GUILD")
 		end
@@ -1451,6 +1649,72 @@ local function CheckPendingCompletions()
         return
     end
 
+    -- =========================================================
+    -- Unlock gating (achievement chains)
+    -- unlockedBy: string id or {id1, id2, ...} (AND)
+    -- =========================================================
+    local function IsAchievementCompletedById(achId)
+        if not achId then return false end
+        local key = tostring(achId)
+
+        -- Prefer row/model immediate state when available
+        if addon and addon.GetAchievementRow then
+            local r = addon.GetAchievementRow(key) or addon.GetAchievementRow(achId)
+            if r and r.completed then
+                return true
+            end
+        end
+
+        local _, cdb = GetCharDB()
+        local rec = cdb and cdb.achievements and cdb.achievements[key]
+        if rec and rec.completed == true then
+            return true
+        end
+        local p = cdb and cdb.progress and cdb.progress[key]
+        if p and p.completed == true then
+            return true
+        end
+        return false
+    end
+
+    local function IsUnlockedBy(def)
+        if not def then return true end
+        local u = def.unlockedBy
+        if u == nil then return true end
+        if type(u) == "string" then
+            return IsAchievementCompletedById(u)
+        end
+        if type(u) == "table" then
+            for _, dep in ipairs(u) do
+                if not IsAchievementCompletedById(dep) then
+                    return false
+                end
+            end
+            return true
+        end
+        return true
+    end
+    if addon then addon.IsUnlockedBy = IsUnlockedBy end
+
+    -- Count completed addon achievements in the current character context.
+    -- Excludes a specific achievement id (typically the row being evaluated) to avoid self-counting.
+    local function CountCompletedAchievements(excludeAchId)
+        local excludeKey = excludeAchId and tostring(excludeAchId) or nil
+        local total = 0
+        local seen = {}
+        for _, r in ipairs(rows) do
+            local rid = r and (r.id or r.achId)
+            local key = rid and tostring(rid) or nil
+            if key and key ~= excludeKey and not seen[key] then
+                seen[key] = true
+                if IsAchievementAlreadyCompleted(r) then
+                    total = total + 1
+                end
+            end
+        end
+        return total
+    end
+
     for _, row in ipairs(rows) do
         -- Check both row.completed and database to prevent re-completion
         if not IsAchievementAlreadyCompleted(row) then
@@ -1458,6 +1722,21 @@ local function CheckPendingCompletions()
 
             -- New completion type: requiredTalkTo (NPC dialog/gossip opened)
             local def = row and row._def
+            if def and addon and addon.IsUnlockedBy and not addon.IsUnlockedBy(def) then
+                -- Locked: do not evaluate completion triggers yet.
+                -- Visibility is handled by ApplyFilter (unlockedBy hides until prerequisites are complete).
+                completedThisRow = true -- short-circuit all other completion checks for this row
+            else
+            if def and def.requiredFallHpLossPct and addon and addon.GetProgress then
+                local id = row.id or row.achId
+                local p = id and addon.GetProgress(id) or nil
+                local best = tonumber(p and p.maxFallHpLossPct) or 0
+                local done = tonumber(p and p.fallSuccessCount) or 0
+                local total = tonumber(def.attemptsAllowed) or 0
+                if row.Sub and type(row.Sub.SetText) == "function" and total > 0 then
+                    row.Sub:SetText(string_format("Best fall: %.1f%% (%d/%d)", best, done, total))
+                end
+            end
             if def and type(def.requiredTalkTo) == "table" and addon and addon.GetProgress then
                 local id = row.id or row.achId
                 if id then
@@ -1496,6 +1775,7 @@ local function CheckPendingCompletions()
                         end
                     end
                 end
+            end
             end
 
             -- New completion type: requiredOpenObject (loot window opened from a GameObject)
@@ -1604,6 +1884,95 @@ local function CheckPendingCompletions()
                 end
             end
 
+            -- Dependency trigger: achiIds={...}
+            -- Complete when all listed achievements are completed.
+            -- Fail when any listed achievement is failed.
+            if (not completedThisRow) and def and type(def.achiIds) == "table" then
+                local deps = def.achiIds
+                local depCount = 0
+                local completedCount = 0
+                local anyFailed = false
+
+                local _, cdb = GetCharDB()
+                local achDb = cdb and cdb.achievements or nil
+                local progDb = cdb and cdb.progress or nil
+
+                for _, depIdRaw in ipairs(deps) do
+                    local depId = tostring(depIdRaw)
+                    if depId and depId ~= "" then
+                        depCount = depCount + 1
+
+                        local rec = achDb and achDb[depId] or nil
+                        local p = progDb and progDb[depId] or nil
+                        local isCompleted = (rec and rec.completed == true) or (p and p.completed == true)
+                        local isFailed = (rec and rec.failed == true) or false
+
+                        if isCompleted then
+                            completedCount = completedCount + 1
+                        end
+                        if isFailed then
+                            anyFailed = true
+                        end
+                    end
+                end
+
+                if depCount > 0 then
+                    local thisAchId = row.id or row.achId
+
+                    -- If any dependency failed, fail this achievement too (unless already completed).
+                    if anyFailed and thisAchId and not IsAchievementAlreadyCompleted(row) then
+                        local _, cdb2 = GetCharDB()
+                        if cdb2 then
+                            cdb2.achievements = cdb2.achievements or {}
+                            local rec2 = cdb2.achievements[thisAchId] or {}
+                            cdb2.achievements[thisAchId] = rec2
+                            if not rec2.completed then
+                                local newlyFailed = (rec2.failed ~= true)
+                                rec2.failed = true
+                                rec2.failedAt = rec2.failedAt or time()
+                                rec2.failReason = rec2.failReason or "dependency"
+                                if newlyFailed then
+                                    -- Fire per-achievement onFail callback once for dependency failures.
+                                    FireAchievementCallback("onFail", thisAchId, row, "dependency", rec2.failedAt)
+                                    if PlaySound then
+                                        local sid = (SOUNDKIT and SOUNDKIT.IG_QUEST_FAILED) or 847
+                                        pcall(PlaySound, sid, "SFX")
+                                    end
+                                    local title = (row.title) or (row.frame and row.frame.Title and row.frame.Title.GetText and row.frame.Title:GetText()) or tostring(thisAchId)
+                                    local msg = "|cff008066[Custom Guild Achievements]|r |cffff4444Failed:|r " .. tostring(title) .. " |cff888888(dependency)|r"
+                                    if DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.AddMessage then
+                                        DEFAULT_CHAT_FRAME:AddMessage(msg)
+                                    else
+                                        print(msg)
+                                    end
+                                end
+                            end
+                        end
+                    elseif completedCount >= depCount then
+                        local attemptOk = not def.attemptEnabled or (addon.AttemptIsActive and addon.AttemptIsActive(row.id or row.achId))
+                        if attemptOk and MarkRowCompletedWithToast(row) then
+                            completedThisRow = true
+                        end
+                    end
+                end
+            end
+
+            -- Generic trigger: nbAchis = N
+            -- Complete when at least N addon achievements are completed (regardless of which ones).
+            if (not completedThisRow) and def and def.nbAchis ~= nil then
+                local need = tonumber(def.nbAchis)
+                if need and need > 0 then
+                    local thisAchId = row.id or row.achId
+                    local completedCount = CountCompletedAchievements(thisAchId)
+                    if completedCount >= need then
+                        local attemptOk = not def.attemptEnabled or (addon.AttemptIsActive and addon.AttemptIsActive(thisAchId))
+                        if attemptOk and MarkRowCompletedWithToast(row) then
+                            completedThisRow = true
+                        end
+                    end
+                end
+            end
+
             -- customIsCompleted / IsCompleted: only EvaluateCustomCompletions (and level-up) to avoid
             -- double toasts with CheckPendingCompletions (e.g. GUILD-WELCOME on GUILD_ROSTER_UPDATE).
         end
@@ -1666,12 +2035,26 @@ local function RestoreCompletionsFromDB()
                 frame.points = row.points
             end
             if frame.Sub then
-                local shouldShowSolo = rec.wasSolo and (isHardcoreActive and IsSelfFound() or not isHardcoreActive)
-                if shouldShowSolo then
-                    -- Completed achievements always show "Solo", not "Solo bonus"
-                    frame.Sub:SetText(AUCTION_TIME_LEFT0 .. "\n" .. GetClassColor .. "Solo|r")
+                local def = row and row._def
+
+                -- Fall-attempt achievements: show persisted "best fall" summary on load.
+                if def and def.requiredFallHpLossPct then
+                    local best = tonumber(rec and rec.maxFallHpLossPct) or 0
+                    local done = tonumber(rec and rec.fallSuccessCount) or 0
+                    local total = tonumber((def and def.attemptsAllowed) or (rec and rec.attemptsAllowed)) or 0
+                    if total and total > 0 then
+                        frame.Sub:SetText(string_format("Best fall: %.1f%% (%d/%d)", best, done, total))
+                    else
+                        frame.Sub:SetText(string_format("Best fall: %.1f%%", best))
+                    end
                 else
-                    frame.Sub:SetText(AUCTION_TIME_LEFT0)
+                    local shouldShowSolo = rec.wasSolo and (isHardcoreActive and IsSelfFound() or not isHardcoreActive)
+                    if shouldShowSolo then
+                        -- Completed achievements always show "Solo", not "Solo bonus"
+                        frame.Sub:SetText(AUCTION_TIME_LEFT0 .. "\n" .. GetClassColor .. "Solo|r")
+                    else
+                        frame.Sub:SetText(AUCTION_TIME_LEFT0)
+                    end
                 end
             end
             if frame.TS then frame.TS:SetText(FormatTimestamp(rec.completedAt)) end
@@ -2026,7 +2409,9 @@ end
 
 -- Play completion toast only when MarkRowCompleted actually applied (avoids duplicate sound/UI).
 MarkRowCompletedWithToast = function(row)
-    local newlyCompleted = MarkRowCompleted(row)
+    -- Route through addon.MarkRowCompleted so Utils/AchievementTracker hook (untrack + dependency auto-track) runs.
+    local markFn = (addon and addon.MarkRowCompleted) or MarkRowCompleted
+    local newlyCompleted = markFn(row)
 
     -- Repeatable achievements (mode B): allow re-triggering the toast even if already completed.
     -- We intentionally keep the return value as "newlyCompleted" so callers can continue to use it
@@ -2156,14 +2541,45 @@ local function SetProgress(achId, key, value)
 
     cdb.progress = cdb.progress or {}
     local p = cdb.progress[achId] or {}
+
+    -- Allow explicit deletion of a key via nil (used by chain-reset logic).
     p[key] = value
     p.updatedAt = time()
+
     -- Only set levelAt for progress-related keys (kills, quests, counts, etc.)
     -- Don't set it for metadata-only keys like levelAtTurnIn, levelAtKill, etc.
-    local shouldSetLevelAt = key == "killed" or key == "quest" or key == "counts" or key == "eligibleCounts" or key == "ineligibleKill" or key == "soloKill" or key == "soloQuest" or key == "pointsAtKill"
+    local shouldSetLevelAt =
+        value ~= nil
+        and (
+            key == "killed"
+            or key == "quest"
+            or key == "counts"
+            or key == "eligibleCounts"
+            or key == "ineligibleKill"
+            or key == "soloKill"
+            or key == "soloQuest"
+            or key == "pointsAtKill"
+        )
     if shouldSetLevelAt then
         p.levelAt = UnitLevel("player") or 1
     end
+
+    -- If deleting every stored field, drop the progress row entirely for cleanliness.
+    if not p.completed and not next(p) then
+        cdb.progress[achId] = nil
+        C_Timer.After(0, function()
+            if restorationsComplete then
+                addon.CheckPendingCompletions()
+                if addon.EvaluateCustomCompletions then
+                    addon.EvaluateCustomCompletions(UnitLevel("player") or 1)
+                end
+                RefreshOutleveledAll()
+                if addon.RefreshAllAchievementPoints then addon.RefreshAllAchievementPoints() end
+            end
+        end)
+        return
+    end
+
     cdb.progress[achId] = p
 
     C_Timer.After(0, function()
@@ -2232,6 +2648,19 @@ local function AttemptActivate(achId, startedBy, timerSetOverride)
     if tracker and type(tracker.Update) == "function" then
         tracker:Update()
     end
+
+    -- Auto-track the achievement when it becomes active (e.g. activated via startNpc).
+    -- This makes progress counters update live without requiring manual re-track.
+    if tracker and type(tracker.TrackAchievement) == "function" then
+        local title =
+            (def and def.title) or
+            (addon and addon.AchievementDefs and addon.AchievementDefs[tostring(achId)] and addon.AchievementDefs[tostring(achId)].title) or
+            tostring(achId)
+        pcall(function()
+            tracker:TrackAchievement(achId, title)
+        end)
+    end
+
     -- Fail immediately if already mounted / shifted / aspect when the attempt becomes active.
     if addon and type(addon.ApplyAttemptTransportFailRules) == "function" then
         addon.ApplyAttemptTransportFailRules()
@@ -2257,6 +2686,7 @@ local function AttemptFail(achId, reason, endAt)
         rec = {}
         cdb.achievements[achId] = rec
     end
+    local wasFailed = (rec.failed == true)
 
     local def = addon and addon.AchievementDefs and addon.AchievementDefs[tostring(achId)]
     local maxRuns = def and tonumber(def.attemptsAllowed) or nil
@@ -2295,6 +2725,45 @@ local function AttemptFail(achId, reason, endAt)
             rec.failed = nil
             rec.failedAt = nil
             rec.failReason = nil
+        end
+    end
+
+    -- If the failure just became terminal, play a "quest failed" sound, print a chat message,
+    -- and fire the per-achievement onFail callback once.
+    if rec and rec.failed == true and not wasFailed then
+        -- Fire callback (before untracking + other side effects).
+        do
+            local row = GetAchievementRowForCallback(achId)
+            FireAchievementCallback("onFail", achId, row, reason, endAt)
+        end
+
+        -- Sound: quest failed / abandoned style (use shared sound alias system when available).
+        if addon and type(addon._cgaPlayWindowSound) == "function" then
+            addon._cgaPlayWindowSound("failed")
+        elseif PlaySound then
+            local sid = (SOUNDKIT and SOUNDKIT.IG_QUEST_FAILED) or "igQuestFailed"
+            pcall(PlaySound, sid)
+        end
+
+        -- Chat message (inverse of completion toast): red failed line.
+        do
+            addon._FailMsgLastAtByAchId = addon._FailMsgLastAtByAchId or {}
+            local now = time and time() or 0
+            local key = tostring(achId)
+            if not (addon._FailMsgLastAtByAchId[key] and (now - addon._FailMsgLastAtByAchId[key]) < 1) then
+                addon._FailMsgLastAtByAchId[key] = now
+                local title = (def and def.title) or tostring(achId)
+                local reasonText = reason and tostring(reason) or nil
+                local msg = "|cff008066[Custom Guild Achievements]|r |cffff4444Failed:|r " .. tostring(title)
+                if reasonText and reasonText ~= "" then
+                    msg = msg .. " |cff888888(" .. reasonText .. ")|r"
+                end
+                if DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.AddMessage then
+                    DEFAULT_CHAT_FRAME:AddMessage(msg)
+                else
+                    print(msg)
+                end
+            end
         end
     end
 
@@ -2434,6 +2903,19 @@ local function ApplyAttemptWalkOnlyFailRules()
         end
     end
     if not need then return end
+
+    -- Grace window: do not instantly fail on activation if the player is currently running.
+    -- Give a short moment to toggle walk before enforcing the rule.
+    local now = time and time() or 0
+    local function IsBeyondGrace(id)
+        if not (addon and addon.GetProgress) then return true end
+        local p = addon.GetProgress(id) or {}
+        local a = p and p.attempt
+        local startedAt = type(a) == "table" and tonumber(a.startedAt) or nil
+        if not startedAt then return true end
+        return (now - startedAt) >= 1
+    end
+
     if not PlayerViolatesWalkOnlyWhileMoving() then
         return
     end
@@ -2444,7 +2926,7 @@ local function ApplyAttemptWalkOnlyFailRules()
                 (row and row._def) or
                 (addon and addon.AchievementDefs and addon.AchievementDefs[tostring(id)]) or
                 nil
-            if def and def.walkOnly == true then
+            if def and def.walkOnly == true and IsBeyondGrace(id) then
                 AttemptFail(id, "not_walking", time())
             end
         end
@@ -2488,6 +2970,564 @@ if addon then
     addon.CheckPendingCompletions = CheckPendingCompletions
     addon.ResetTabPosition = ResetTabPosition
     addon.RestoreCompletionsFromDB = RestoreCompletionsFromDB
+end
+
+-- =========================================================
+-- startNpc "!" pins (WorldMap + minimap direction)
+-- =========================================================
+-- Opt-in per achievement definition:
+--   startNpc = { npcId = 466, mapId = 1453, x = 0.64, y = 0.75, mapPin = true, window = {...} }
+-- Coordinates are normalized (0..1).
+do
+    -- Use Raid Target "Diamond" icon everywhere (maps + minimap + nameplate marking).
+    local RAID_TARGET_DIAMOND = 3
+    local PIN_TEX = "Interface\\TargetingFrame\\UI-RaidTargetingIcon_3"
+    local PIN_SIZE = 18
+    local MINIMAP_PIN_SIZE = 16
+    local UPDATE_SEC = 0.25
+
+    -- Empirical minimap visible radius (yards) per zoom level.
+    -- These values don't need to be perfect; they just keep the marker from "overreacting".
+    -- zoom index is 0..5 in Classic (6 levels).
+    local OUTDOOR_RANGE_YARDS_BY_ZOOM = { 320, 240, 180, 135, 100, 75 }
+    local INDOOR_RANGE_YARDS_BY_ZOOM  = { 220, 165, 125, 95, 70, 55 }
+    local FALLBACK_RANGE_NORM = 0.14 -- when we cannot convert to yards (no map world size)
+
+    local worldPins = {} -- key -> frame
+    local minimapPin
+    local ticker
+
+    -- Nameplate-driven "always mark nearest eligible startNpc" with raid target diamond.
+    local npFrame
+    local visibleUnitsByGuid = {} -- guid -> unitToken ("nameplateX")
+    local markedGuid = nil
+    local nameplateOverlayByGuid = {} -- guid -> { frame=Frame, tex=Texture }
+    local unitScanFrame
+
+    local function ShowPinTooltip(frame)
+        if not (frame and frame._cgaPinTitle and GameTooltip and GameTooltip.SetOwner) then return end
+        GameTooltip:SetOwner(frame, "ANCHOR_RIGHT")
+        GameTooltip:ClearLines()
+        GameTooltip:AddLine(tostring(frame._cgaPinTitle), 1, 0.82, 0, true)
+        GameTooltip:Show()
+    end
+
+    local function HidePinTooltip()
+        if GameTooltip and GameTooltip.Hide then
+            GameTooltip:Hide()
+        end
+    end
+
+    local function GetNpcIdFromGUID(guid)
+        if not guid then return nil end
+        local _, _, _, _, _, npcIdStr = strsplit("-", guid)
+        local npcId = npcIdStr and tonumber(npcIdStr) or nil
+        return npcId
+    end
+
+    local function IsTerminalFailed(achId)
+        if not achId then return false end
+        local getCharDB = addon and addon.GetCharDB
+        if type(getCharDB) ~= "function" then return false end
+        local _, cdb = getCharDB()
+        if not (cdb and cdb.achievements) then return false end
+        local rec = cdb.achievements[tostring(achId)]
+        return rec and rec.failed == true
+    end
+
+    local function BuildEligibleStartNpcIdSet()
+        local set = {}
+        if not addon or not addon.AchievementRowModel then return set end
+        for _, row in ipairs(addon.AchievementRowModel) do
+            local achId = row and (row.id or row.achId)
+            if row and achId and not IsAchievementAlreadyCompleted(row) and not IsTerminalFailed(achId) then
+                local def = row._def
+                local sn = def and def.startNpc
+                -- Eligibility for raid marking is based on "has a startNpc" (not strictly map pins).
+                -- Opt-in signals:
+                -- - sn.raidMark == true (explicit)
+                -- - sn.mapPin == true (we already opted into map/minimap pins)
+                -- - sn.window table (interactive startNpc)
+                local markOk = sn and (sn.raidMark == true or sn.mapPin == true or type(sn.window) == "table")
+                if markOk then
+                    local nid = tonumber(sn.npcId) or tonumber(sn.id)
+                    if nid then
+                        set[nid] = true
+                    end
+                end
+            end
+        end
+        return set
+    end
+
+    local function UnitIsEligibleStartNpc(unit, eligibleNpcIds)
+        if not (unit and UnitExists and UnitExists(unit)) then return false end
+        if UnitIsPlayer and UnitIsPlayer(unit) then return false end
+        local guid = UnitGUID and UnitGUID(unit)
+        if not guid then return false end
+        local npcId = GetNpcIdFromGUID(guid)
+        if not npcId then return false end
+        if not (eligibleNpcIds and eligibleNpcIds[npcId]) then return false end
+        -- You stated: never hostile. Keep safe anyway.
+        if UnitCanAttack and UnitCanAttack("player", unit) then return false end
+        return true
+    end
+
+    local function TrySetRaidDiamond(unit)
+        if not (SetRaidTarget and GetRaidTargetIndex) then return false end
+        local eligibleNpcIds = BuildEligibleStartNpcIdSet()
+        if not UnitIsEligibleStartNpc(unit, eligibleNpcIds) then return false end
+
+        -- Attempt set; verify it actually applied.
+        pcall(SetRaidTarget, unit, RAID_TARGET_DIAMOND)
+        return GetRaidTargetIndex(unit) == RAID_TARGET_DIAMOND
+    end
+
+    local function GetStartNpcPinsForMap(mapId)
+        local out = {}
+        if not addon or not addon.AchievementRowModel then return out end
+        for _, row in ipairs(addon.AchievementRowModel) do
+            local achId = row and (row.id or row.achId)
+            if row and achId and not IsAchievementAlreadyCompleted(row) and not IsTerminalFailed(achId) then
+                local def = row._def
+                local sn = def and def.startNpc
+                if sn and sn.mapPin == true then
+                    local mid = tonumber(sn.mapId)
+                    local x = tonumber(sn.x)
+                    local y = tonumber(sn.y)
+                    if mid and mid == mapId and x and y and x >= 0 and x <= 1 and y >= 0 and y <= 1 then
+                        table.insert(out, {
+                            achId = tostring(achId),
+                            mapId = mid,
+                            x = x,
+                            y = y,
+                            title = def and def.title or nil,
+                        })
+                    end
+                end
+            end
+        end
+        return out
+    end
+
+    local function EnsureWorldPin(key)
+        local f = worldPins[key]
+        if f and f.SetShown then return f end
+        if not (WorldMapFrame and WorldMapFrame.ScrollContainer and WorldMapFrame.ScrollContainer.Child) then
+            return nil
+        end
+        f = CreateFrame("Frame", nil, WorldMapFrame.ScrollContainer.Child)
+        f:SetSize(PIN_SIZE, PIN_SIZE)
+        f.tex = f:CreateTexture(nil, "OVERLAY")
+        f.tex:SetAllPoints(f)
+        f.tex:SetTexture(PIN_TEX)
+        f:EnableMouse(true)
+        f:SetScript("OnEnter", ShowPinTooltip)
+        f:SetScript("OnLeave", HidePinTooltip)
+        f:Hide()
+        worldPins[key] = f
+        return f
+    end
+
+    local function UpdateWorldMapPins()
+        if not (WorldMapFrame and WorldMapFrame.IsShown and WorldMapFrame:IsShown()) then
+            -- Map closed: hide pins to avoid any click/strata surprises.
+            for _, f in pairs(worldPins) do
+                if f and f.Hide then f:Hide() end
+            end
+            return
+        end
+
+        local mapId = (WorldMapFrame.GetMapID and WorldMapFrame:GetMapID()) or nil
+        if not mapId then return end
+
+        local child = WorldMapFrame.ScrollContainer and WorldMapFrame.ScrollContainer.Child
+        if not child then return end
+        local w = child.GetWidth and child:GetWidth() or 0
+        local h = child.GetHeight and child:GetHeight() or 0
+        if not w or not h or w <= 10 or h <= 10 then return end
+
+        local shown = {}
+        for _, e in ipairs(GetStartNpcPinsForMap(mapId)) do
+            local key = tostring(e.achId) .. ":" .. tostring(e.mapId) .. ":" .. tostring(e.x) .. ":" .. tostring(e.y)
+            local f = EnsureWorldPin(key)
+            if f then
+                f._cgaPinTitle = e.title or f._cgaPinTitle
+                f:ClearAllPoints()
+                f:SetPoint("TOPLEFT", child, "TOPLEFT", (e.x * w) - (PIN_SIZE / 2), -(e.y * h) + (PIN_SIZE / 2))
+                f:Show()
+                shown[key] = true
+            end
+        end
+
+        for key, f in pairs(worldPins) do
+            if f and f.Hide and not shown[key] then
+                f:Hide()
+            end
+        end
+    end
+
+    local function EnsureMinimapPin()
+        if minimapPin and minimapPin.SetShown then return minimapPin end
+        if not Minimap then return nil end
+        local f = CreateFrame("Frame", nil, Minimap)
+        f:SetSize(MINIMAP_PIN_SIZE, MINIMAP_PIN_SIZE)
+        f.tex = f:CreateTexture(nil, "OVERLAY")
+        f.tex:SetAllPoints(f)
+        f.tex:SetTexture(PIN_TEX)
+        f:EnableMouse(true)
+        f:SetScript("OnEnter", ShowPinTooltip)
+        f:SetScript("OnLeave", HidePinTooltip)
+        f:Hide()
+        minimapPin = f
+        return f
+    end
+
+    local function UpdateMinimapPin()
+        local f = EnsureMinimapPin()
+        if not f then return end
+
+        if not (C_Map and C_Map.GetBestMapForUnit and C_Map.GetPlayerMapPosition) then
+            f:Hide()
+            return
+        end
+
+        local mapId = C_Map.GetBestMapForUnit("player")
+        if not mapId then f:Hide(); return end
+
+        local pos = C_Map.GetPlayerMapPosition(mapId, "player")
+        if not pos then f:Hide(); return end
+        local px, py = pos:GetXY()
+        if not px or not py then f:Hide(); return end
+
+        local pins = GetStartNpcPinsForMap(mapId)
+        if not pins or #pins == 0 then
+            f:Hide()
+            return
+        end
+
+        -- Pick nearest pin (normalized distance) and show direction towards it.
+        local best, bestD2
+        for _, e in ipairs(pins) do
+            local dx = e.x - px
+            local dy = e.y - py
+            local d2 = (dx * dx) + (dy * dy)
+            if not bestD2 or d2 < bestD2 then
+                bestD2 = d2
+                best = e
+            end
+        end
+        if not best then f:Hide(); return end
+
+        f._cgaPinTitle = best.title or f._cgaPinTitle
+
+        local dx = best.x - px
+        local dy = best.y - py
+
+        -- Convert normalized map delta to a pseudo-world delta.
+        -- If the client provides map world size, use it to correct X vs Y scaling.
+        local wx, wy
+        if C_Map and C_Map.GetMapWorldSize then
+            local ok, a, b = pcall(C_Map.GetMapWorldSize, mapId)
+            if ok then wx, wy = a, b end
+        end
+        local vx = dx * (tonumber(wx) or 1)
+        local vy = dy * (tonumber(wy) or 1)
+
+        -- Map coords: y+ is south (down). UI coords: y+ is up.
+        vy = -vy
+
+        -- If minimap rotates, rotate the vector by -facing so "up" matches player heading.
+        if GetCVar and GetPlayerFacing and GetCVar("rotateMinimap") == "1" then
+            local facing = GetPlayerFacing() or 0
+            local c = math.cos(-facing)
+            local s = math.sin(-facing)
+            local rx = (vx * c) - (vy * s)
+            local ry = (vx * s) + (vy * c)
+            vx, vy = rx, ry
+        end
+
+        local r = ((Minimap.GetWidth and Minimap:GetWidth()) or 140) / 2
+        r = (tonumber(r) or 70) - 10
+
+        f:ClearAllPoints()
+
+        local dist = math.sqrt((vx * vx) + (vy * vy))
+        if dist < 1e-6 then
+            f:SetPoint("CENTER", Minimap, "CENTER", 0, 0)
+            f:Show()
+            return
+        end
+
+        -- Range scaling:
+        -- - If wx/wy are available, vx/vy are in world units (yards-ish). Use a yards range.
+        -- - Otherwise, vx/vy are normalized; use a normalized range.
+        local zoom = (Minimap and Minimap.GetZoom and Minimap:GetZoom()) or 0
+        zoom = math.max(0, math.min(5, tonumber(zoom) or 0))
+
+        local range
+        if wx and wy then
+            local indoors = (IsIndoors and IsIndoors()) or false
+            local t = indoors and INDOOR_RANGE_YARDS_BY_ZOOM or OUTDOOR_RANGE_YARDS_BY_ZOOM
+            range = tonumber(t[zoom + 1]) or tonumber(t[1]) or 250
+            -- Gentle dampening: slightly larger effective range => less movement on minimap.
+            range = range * 1.1
+        else
+            range = FALLBACK_RANGE_NORM
+        end
+
+        -- Scale into minimap pixels and clamp to circle.
+        local scale = r / (range > 0 and range or 1)
+        local ox = vx * scale
+        local oy = vy * scale
+        local od = math.sqrt((ox * ox) + (oy * oy))
+        if od > r then
+            local k = r / od
+            ox, oy = ox * k, oy * k
+        end
+
+        f:SetPoint("CENTER", Minimap, "CENTER", ox, oy)
+        f:Show()
+    end
+
+    local function ClearMarkedDiamond()
+        if not markedGuid then return end
+        local unit = visibleUnitsByGuid[markedGuid]
+        -- Clear Blizzard raid marker if we had permission to set it.
+        if unit and UnitExists(unit) and GetRaidTargetIndex and SetRaidTarget then
+            if GetRaidTargetIndex(unit) == RAID_TARGET_DIAMOND then
+                pcall(SetRaidTarget, unit, 0)
+            end
+        end
+        -- Clear our nameplate overlay marker (always works).
+        local o = nameplateOverlayByGuid[markedGuid]
+        if o and o.frame and o.frame.Hide then
+            o.frame:Hide()
+        end
+        markedGuid = nil
+    end
+
+    local function EnsureNameplateOverlay(guid, unit)
+        if not (guid and unit and C_NamePlate and C_NamePlate.GetNamePlateForUnit) then return nil end
+        local existing = nameplateOverlayByGuid[guid]
+        if existing and existing.frame and existing.tex then
+            return existing
+        end
+        local plate = C_NamePlate.GetNamePlateForUnit(unit)
+        if not plate then return nil end
+
+        local f = CreateFrame("Frame", nil, plate)
+        f:SetSize(14, 14)
+        f:SetFrameStrata("HIGH")
+        f:SetFrameLevel((plate:GetFrameLevel() or 0) + 50)
+
+        local tex = f:CreateTexture(nil, "OVERLAY")
+        tex:SetAllPoints(f)
+        tex:SetTexture(PIN_TEX)
+
+        -- Anchor above the name text when available; fallback near top.
+        local nameRegion = plate.UnitFrame and plate.UnitFrame.name
+        if nameRegion and nameRegion.GetObjectType then
+            f:SetPoint("BOTTOM", nameRegion, "TOP", 0, 2)
+        else
+            f:SetPoint("TOP", plate, "TOP", 0, -2)
+        end
+
+        f:Hide()
+        nameplateOverlayByGuid[guid] = { frame = f, tex = tex }
+        return nameplateOverlayByGuid[guid]
+    end
+
+    local function ShowNameplateOverlayForGuid(guid, unit)
+        local o = EnsureNameplateOverlay(guid, unit)
+        if o and o.frame and o.frame.Show then
+            o.frame:Show()
+        end
+    end
+
+    local function HideAllNameplateOverlaysExcept(guidKeep)
+        for guid, o in pairs(nameplateOverlayByGuid) do
+            if guid ~= guidKeep and o and o.frame and o.frame.Hide then
+                o.frame:Hide()
+            end
+        end
+    end
+
+    local function UpdateNearestDiamondMark()
+        local eligibleNpcIds = BuildEligibleStartNpcIdSet()
+        local canPos = (type(UnitPosition) == "function")
+        local px, py, pinst
+        if canPos then
+            px, py, _, pinst = UnitPosition("player")
+            if not px or not py then
+                canPos = false
+            end
+        end
+
+        local bestGuid, bestUnit, bestD2
+        for guid, unit in pairs(visibleUnitsByGuid) do
+            if unit and UnitExists(unit) and not UnitIsPlayer(unit) then
+                -- Nameplate unit tokens are recycled; ensure the token still points to this GUID.
+                local ug = UnitGUID(unit)
+                if ug ~= guid then
+                    visibleUnitsByGuid[guid] = nil
+                else
+                local npcId = GetNpcIdFromGUID(guid)
+                if npcId and eligibleNpcIds[npcId] then
+                    -- Never hostile per your guild use-case; keep safe anyway.
+                    if not (UnitCanAttack and UnitCanAttack("player", unit)) then
+                        if canPos then
+                            local ux, uy, _, uinst = UnitPosition(unit)
+                            if ux and uy and (not pinst or not uinst or pinst == uinst) then
+                                local dx = ux - px
+                                local dy = uy - py
+                                local d2 = (dx * dx) + (dy * dy)
+                                if not bestD2 or d2 < bestD2 then
+                                    bestD2 = d2
+                                    bestGuid = guid
+                                    bestUnit = unit
+                                end
+                            end
+                        else
+                            -- Fallback if UnitPosition is unavailable: pick first eligible.
+                            if not bestUnit then
+                                bestGuid = guid
+                                bestUnit = unit
+                                bestD2 = 0
+                            end
+                        end
+                    end
+                end
+                end
+            end
+        end
+
+        if not bestGuid or not bestUnit then
+            ClearMarkedDiamond()
+            return
+        end
+
+        if markedGuid ~= bestGuid then
+            -- Clear old (if still around) before switching.
+            ClearMarkedDiamond()
+            markedGuid = bestGuid
+        end
+
+        -- Prefer Blizzard raid marker when it works; overlay is a fallback.
+        local raidOk = false
+        if GetRaidTargetIndex and SetRaidTarget then
+            if GetRaidTargetIndex(bestUnit) ~= RAID_TARGET_DIAMOND then
+                pcall(SetRaidTarget, bestUnit, RAID_TARGET_DIAMOND)
+            end
+            raidOk = (GetRaidTargetIndex(bestUnit) == RAID_TARGET_DIAMOND)
+        end
+        if raidOk then
+            -- Hide overlays if raid marker is visible.
+            HideAllNameplateOverlaysExcept(nil)
+        else
+            -- Fallback overlay on the best unit's nameplate (no permission needed).
+            ShowNameplateOverlayForGuid(bestGuid, bestUnit)
+            HideAllNameplateOverlaysExcept(bestGuid)
+        end
+    end
+
+    local function Tick()
+        UpdateWorldMapPins()
+        UpdateMinimapPin()
+        UpdateNearestDiamondMark()
+    end
+
+    local function Enable()
+        if ticker then return end
+        if not (C_Timer and C_Timer.NewTicker) then return end
+        ticker = C_Timer.NewTicker(UPDATE_SEC, Tick)
+        Tick()
+    end
+
+    if addon then
+        addon.EnableStartNpcMapPins = Enable
+        addon.UpdateStartNpcMapPins = Tick
+    end
+
+    if WorldMapFrame and WorldMapFrame.HookScript then
+        WorldMapFrame:HookScript("OnShow", Tick)
+    end
+
+    -- Nameplate events: keep list of visible eligible NPCs.
+    npFrame = CreateFrame("Frame")
+    npFrame:RegisterEvent("NAME_PLATE_UNIT_ADDED")
+    npFrame:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
+    npFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    npFrame:SetScript("OnEvent", function(_, event, unit)
+        if event == "PLAYER_ENTERING_WORLD" then
+            wipe(visibleUnitsByGuid)
+            ClearMarkedDiamond()
+            for _, o in pairs(nameplateOverlayByGuid) do
+                if o and o.frame and o.frame.Hide then o.frame:Hide() end
+            end
+            return
+        end
+        if type(unit) ~= "string" then return end
+
+        if event == "NAME_PLATE_UNIT_ADDED" then
+            if not UnitExists(unit) then return end
+            local guid = UnitGUID(unit)
+            if not guid then return end
+            local npcId = GetNpcIdFromGUID(guid)
+            if not npcId then return end
+            -- Track only if it is currently eligible; eligibility can change later (completion/fail),
+            -- and we re-filter each tick in UpdateNearestDiamondMark().
+            visibleUnitsByGuid[guid] = unit
+        elseif event == "NAME_PLATE_UNIT_REMOVED" then
+            if not UnitExists(unit) then
+                -- Still try to remove by guid if we can.
+            end
+            local guid = UnitGUID(unit)
+            if guid then
+                visibleUnitsByGuid[guid] = nil
+                local o = nameplateOverlayByGuid[guid]
+                if o and o.frame and o.frame.Hide then
+                    o.frame:Hide()
+                end
+                if markedGuid == guid then
+                    -- Unit is leaving nameplate range; clear marker while we still have token.
+                    if GetRaidTargetIndex and SetRaidTarget and GetRaidTargetIndex(unit) == RAID_TARGET_DIAMOND then
+                        pcall(SetRaidTarget, unit, 0)
+                    end
+                    markedGuid = nil
+                end
+            end
+        end
+    end)
+
+    -- Without nameplates, we still have reliable unit tokens for target/mouseover.
+    -- Mark diamond when the user targets or hovers an eligible startNpc.
+    unitScanFrame = CreateFrame("Frame")
+    local lastHoverGuid = nil
+    local function ClearLastHoverDiamond()
+        if not (lastHoverGuid and SetRaidTarget and GetRaidTargetIndex) then
+            lastHoverGuid = nil
+            return
+        end
+        local unit = visibleUnitsByGuid and visibleUnitsByGuid[lastHoverGuid]
+        if unit and UnitExists(unit) and GetRaidTargetIndex(unit) == RAID_TARGET_DIAMOND then
+            pcall(SetRaidTarget, unit, 0)
+        end
+        lastHoverGuid = nil
+    end
+    unitScanFrame:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
+    unitScanFrame:SetScript("OnEvent", function(_, event)
+        if event == "UPDATE_MOUSEOVER_UNIT" then
+            -- Hover mode: set on mouseover, and remove when mouseover ends (best-effort).
+            local ok = TrySetRaidDiamond("mouseover")
+            if ok then
+                lastHoverGuid = UnitGUID and UnitGUID("mouseover") or lastHoverGuid
+            else
+                -- Mouseover left / not eligible: clear last hover marker when we still have a unit token for it.
+                ClearLastHoverDiamond()
+            end
+        end
+    end)
 end
 
 -- =========================================================
@@ -2629,6 +3669,11 @@ initFrame:SetScript("OnEvent", function(self, event, ...)
         
         -- Initialize minimap button (lightweight, can run immediately)
         InitializeMinimapButton()
+
+        -- Enable startNpc "!" pins (only for defs that provide mapId/x/y and mapPin=true).
+        if addon and addon.EnableStartNpcMapPins then
+            addon.EnableStartNpcMapPins()
+        end
         
         -- Load saved tab position (lightweight, can run immediately)
         LoadTabPosition()
@@ -2688,17 +3733,17 @@ function addon:ShowWelcomeMessage()
     -- Show message if stored version is less than current version
     if storedVersion < WELCOME_MESSAGE_NUMBER and not Disabled then
         if GetExpansionLevel() > 0 then
-            StaticPopup_Show("Hardcore Achievements TBC")
+            StaticPopup_Show("Custom Guild Achievements TBC")
         else
-            StaticPopup_Show("Hardcore Achievements Vanilla")
+            StaticPopup_Show("Custom Guild Achievements Vanilla")
         end
         db.settings.welcomeMessageVersion = WELCOME_MESSAGE_NUMBER
     end
 end
 
 -- Define the welcome message popup
-StaticPopupDialogs["Hardcore Achievements Vanilla"] = {
-    text = "|cff008066Hardcore Achievements|r\n\nThis addon has had a major code refactor to improve performance, stability, and load times.\n\nOf course, this means some things may be broken. Please report any issues you encounter.",
+StaticPopupDialogs["Custom Guild Achievements Vanilla"] = {
+    text = "|cff008066Custom Guild Achievements|r\n\nThis addon has had a major code refactor to improve performance, stability, and load times.\n\nOf course, this means some things may be broken. Please report any issues you encounter.",
     button1 = "Okay",
     --button2 = "Show Me!",
     timeout = 0,
@@ -2713,8 +3758,8 @@ StaticPopupDialogs["Hardcore Achievements Vanilla"] = {
     --end,
 }
 
-StaticPopupDialogs["Hardcore Achievements TBC"] = {
-    text = "|cff008066Hardcore Achievements|r\n\nThis addon has had a major code refactor to improve performance, stability, and load times.\n\nOf course, this means some things may be broken. Please report any issues you encounter.",
+StaticPopupDialogs["Custom Guild Achievements TBC"] = {
+    text = "|cff008066Custom Guild Achievements|r\n\nThis addon has had a major code refactor to improve performance, stability, and load times.\n\nOf course, this means some things may be broken. Please report any issues you encounter.",
     button1 = "Okay",
     --button2 = "Show Me!",
     timeout = 0,
@@ -2981,7 +4026,7 @@ local function ResetTabPosition()
         end
     end
 
-    print("|cff008066[Hardcore Achievements]|r Tab position reset to default")
+    print("|cff008066[Custom Guild Achievements]|r Tab position reset to default")
 end
 if addon then addon.ResetTabPosition = ResetTabPosition end
 
@@ -3490,6 +4535,12 @@ local function ApplyFilter()
         if row.hiddenByProfession then
             shouldShow = false
         end
+        -- Chain unlock: hide until prerequisites are completed
+        if shouldShow and (not row.completed) and row._def and row._def.unlockedBy and addon and addon.IsUnlockedBy then
+            if not addon.IsUnlockedBy(row._def) then
+                shouldShow = false
+            end
+        end
         -- Hide GuildFirst achievements that are already claimed by someone else.
         -- IMPORTANT: only apply this to achievements explicitly marked as GuildFirst,
         -- otherwise we'll do unnecessary checks (and spam debug) for the entire catalog.
@@ -3534,6 +4585,12 @@ local function ApplyFilter()
     
     -- Recalculate and update the row positioning after filtering
     SortAchievementRows()
+
+    -- Dependent achievements (unlockedBy): auto-track when they become eligible (login, filter, UI refresh).
+    local tr = addon and addon.AchievementTracker
+    if tr and type(tr.AutoTrackUnlockedByDependents) == "function" then
+        tr:AutoTrackUnlockedByDependents(nil)
+    end
 end
 
 if addon then addon.ApplyFilter = ApplyFilter end
@@ -3925,7 +4982,7 @@ local function CreateAchievementRowFromData(data, index)
                 -- Chat edit box is NOT active: track/untrack achievement (resolve at call time; addon.AchievementTracker set by Utils/AchievementTracker.lua)
                 local tracker = addon and addon.AchievementTracker
                 if not tracker or type(tracker.IsTracked) ~= "function" then
-                    print("|cff008066[Hardcore Achievements]|r Achievement tracker not available. Please reload your UI (/reload).")
+                    print("|cff008066[Custom Guild Achievements]|r Achievement tracker not available. Please reload your UI (/reload).")
                     return
                 end
                 
@@ -3941,10 +4998,10 @@ local function CreateAchievementRowFromData(data, index)
                 
                 if isTracked then
                     tracker:UntrackAchievement(achId)
-                    --print("|cff008066[Hardcore Achievements]|r Stopped tracking: " .. title)
+                    --print("|cff008066[Custom Guild Achievements]|r Stopped tracking: " .. title)
                 else
                     tracker:TrackAchievement(achId, title)
-                    --print("|cff008066[Hardcore Achievements]|r Now tracking: " .. title)
+                    --print("|cff008066[Custom Guild Achievements]|r Now tracking: " .. title)
                 end
             end
         end
@@ -4061,6 +5118,15 @@ local function CreateAchievementRowFromData(data, index)
     if data.requiredAchievements then
         row.requiredAchievements = data.requiredAchievements
     end
+    if data.achiIds then
+        row.achiIds = data.achiIds
+    end
+    if data.nbAchis then
+        row.nbAchis = data.nbAchis
+    end
+    if data.unlockedBy ~= nil then
+        row.unlockedBy = data.unlockedBy
+    end
     data.frame = row
 
     -- Apply any deferred UI initializers registered on the model entry
@@ -4139,6 +5205,15 @@ local function CreateAchievementRow(parent, achId, title, tooltip, icon, level, 
     end
     if def and def.requiredAchievements then
         data.requiredAchievements = def.requiredAchievements
+    end
+    if def and def.achiIds then
+        data.achiIds = def.achiIds
+    end
+    if def and def.nbAchis then
+        data.nbAchis = def.nbAchis
+    end
+    if def and def.unlockedBy ~= nil then
+        data.unlockedBy = def.unlockedBy
     end
     if def and def.achievementOrder then
         data.achievementOrder = def.achievementOrder
@@ -4228,6 +5303,12 @@ EvaluateCustomCompletions = function(newLevel)
     for _, row in ipairs(rows) do
         -- Check both row.completed and database to prevent re-completion
         if not IsAchievementAlreadyCompleted(row) then
+            do
+                local def = row and row._def
+                if def and addon and addon.IsUnlockedBy and not addon.IsUnlockedBy(def) then
+                    -- Locked chain step: do not evaluate generic IsCompleted trackers yet.
+                    -- (Otherwise stale kill progress while locked can instantly complete after unlock.)
+                else
             local fn = row.customIsCompleted
             if type(fn) ~= "function" then
                 local id = row.id or row.achId
@@ -4245,6 +5326,8 @@ EvaluateCustomCompletions = function(newLevel)
                     if MarkRowCompletedWithToast(row) then
                         anyCompleted = true
                     end
+                end
+            end
                 end
             end
         end
@@ -4446,7 +5529,7 @@ do
             local bubble = hint:CreateTexture(nil, "OVERLAY")
             bubble:SetSize(22, 22)
             bubble:SetTexture("Interface\\GossipFrame\\GossipGossipIcon")
-            bubble:SetPoint("CENTER", hint, "CENTER", 0, 0)
+            bubble:SetPoint("CENTER", hint, "CENTER", 3, -36  )
             bubble:Hide()
             hint.bubble = bubble
 
@@ -4540,6 +5623,17 @@ do
             return false
         end
 
+        -- Attempt/startNpc guard: once an achievement is terminal failed, its start NPC must no longer offer activation UI.
+        local function IsAchievementTerminalFailed(achId)
+            if not achId then return false end
+            local getCharDB = addon and addon.GetCharDB
+            if type(getCharDB) ~= "function" then return false end
+            local _, cdb = getCharDB()
+            if not (cdb and cdb.achievements) then return false end
+            local rec = cdb.achievements[tostring(achId)]
+            return rec and rec.failed == true
+        end
+
         local function UpdateNpcCursorHintForMouseover()
             local hint = achEvt._cgaNpcCursorHint
             if not hint then return end
@@ -4572,7 +5666,8 @@ do
             local showBubble = false
             local bubbleSpec = nil
             for _, row in ipairs(addon.AchievementRowModel or {}) do
-                if row and not IsAchievementAlreadyCompleted(row) then
+                local achId = row and (row.id or row.achId)
+                if row and not IsAchievementAlreadyCompleted(row) and not IsAchievementTerminalFailed(achId) then
                     local def = row._def
                     if def then
                         local sn = def.startNpc
@@ -4613,32 +5708,57 @@ do
             local f
             do
                 -- Prefer a Blizzard-like window template when available.
-                local ok, created = pcall(CreateFrame, "Frame", "CGA_CustomNpcWindow", UIParent, "BasicFrameTemplateWithInset")
+                local ok, created = pcall(CreateFrame, "Frame", "CGA_CustomNpcWindow", UIParent, "PortraitFrameTemplate")
                 if ok and created then
                     f = created
                 else
                     f = CreateFrame("Frame", "CGA_CustomNpcWindow", UIParent, "BackdropTemplate")
                 end
             end
-            f:SetSize(360, 220)
-            f:SetPoint("CENTER", UIParent, "CENTER", 0, 120)
+            f:SetSize(300, 335)
+            -- Anchor like Blizzard quest/gossip frames (top-left-ish)
+            f:ClearAllPoints()
+            f:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 16, -116)
             f:SetFrameStrata("DIALOG")
             f:SetFrameLevel(2000)
             f:Hide()
 
             -- Background: use parchment-style texture (quest/gossip-like) with a safe fallback.
             do
-                local bgParent = (f.Inset and f.Inset.GetObjectType and f.Inset) or f
-                local bg = f:CreateTexture(nil, "BACKGROUND")
-                bg:SetAllPoints(bgParent)
-                bg:SetTexture("Interface\\QuestFrame\\QuestBG")
-                bg:SetVertexColor(1, 1, 1, 1)
-                f._cgaBg = bg
+                -- Prefer the template's own background texture if present (PortraitFrameTemplate often has Bg/InsetBg).
+                local templateBg = f.Bg or f.bg or nil
+                if templateBg and templateBg.SetTexture then
+                    templateBg:SetTexture("Interface\\QuestFrame\\QuestBG")
+                    templateBg:ClearAllPoints()
+                    templateBg:SetAllPoints(f)
+                    if templateBg.SetTexCoord then
+                        templateBg:SetTexCoord(0, 1, 0, 1)
+                    end
+                    if templateBg.SetVertexColor then
+                        templateBg:SetVertexColor(1, 1, 1, 1)
+                    end
+                    f._cgaBg = templateBg
+                else
+                    local bg = f:CreateTexture(nil, "ARTWORK")
+                    -- Use the full frame, not the template inset (inset is smaller, causing partial coverage).
+                    bg:SetAllPoints(f)
+                    bg:SetTexture("Interface\\QuestFrame\\QuestBG")
+                    bg:SetTexCoord(0, 1, 0, 1)
+                    bg:SetVertexColor(1, 1, 1, 1)
+                    f._cgaBg = bg
+                end
+
+                -- Hide/dim any inset background that could cover part of the frame.
+                local insetBg = f.InsetBg or (f.Inset and f.Inset.Bg) or nil
+                if insetBg and insetBg.SetAlpha then
+                    insetBg:SetAlpha(0)
+                end
 
                 -- If BackdropTemplate exists, keep border as a fallback.
                 if type(f.SetBackdrop) == "function" then
                     f:SetBackdrop({
-                        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+                        -- Keep bgFile empty-ish so the parchment stays visible everywhere.
+                        bgFile = "Interface\\Buttons\\WHITE8x8",
                         edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
                         tile = true,
                         tileSize = 32,
@@ -4646,7 +5766,7 @@ do
                         insets = { left = 11, right = 12, top = 12, bottom = 11 },
                     })
                     if type(f.SetBackdropColor) == "function" then
-                        f:SetBackdropColor(1, 1, 1, 1)
+                        f:SetBackdropColor(1, 1, 1, 0)
                     end
                     if type(f.SetBackdropBorderColor) == "function" then
                         f:SetBackdropBorderColor(1, 1, 1, 1)
@@ -4663,9 +5783,32 @@ do
             title:SetText("")
             f.title = title
 
+            -- Portrait: ensure we always have a round portrait on the left.
+            do
+                local portrait = f.Portrait or f.portrait or (f.PortraitContainer and f.PortraitContainer.portrait) or nil
+                if not portrait then
+                    portrait = f:CreateTexture(nil, "ARTWORK")
+                    portrait:SetSize(60, 60)
+                    portrait:SetPoint("TOPLEFT", f, "TOPLEFT", 7, -7)
+                end
+                f._cgaPortrait = portrait
+
+                -- Try to apply a round mask if available; otherwise it's still acceptable.
+                if not f._cgaPortraitMask and portrait and portrait.AddMaskTexture and type(f.CreateMaskTexture) == "function" then
+                    local ok, mask = pcall(f.CreateMaskTexture, f)
+                    if ok and mask then
+                        -- NOTE: Classic clients differ; keep this best-effort and never error.
+                        pcall(mask.SetTexture, mask, "Interface\\CharacterFrame\\TempPortraitAlphaMask")
+                        pcall(mask.SetAllPoints, mask, portrait)
+                        pcall(portrait.AddMaskTexture, portrait, mask)
+                        f._cgaPortraitMask = mask
+                    end
+                end
+            end
+
             local scroll = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
-            scroll:SetPoint("TOPLEFT", f, "TOPLEFT", 16, -44)
-            scroll:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -34, 50)
+            scroll:SetPoint("TOPLEFT", f, "TOPLEFT", 24, -72)
+            scroll:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -34, 74)
             f.scroll = scroll
 
             local body = CreateFrame("Frame", nil, scroll)
@@ -4673,7 +5816,7 @@ do
             scroll:SetScrollChild(body)
             f.body = body
 
-            local text = body:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+            local text = body:CreateFontString(nil, "OVERLAY", "QuestFont")
             text:SetPoint("TOPLEFT", body, "TOPLEFT", 0, 0)
             text:SetPoint("TOPRIGHT", body, "TOPRIGHT", 0, 0)
             text:SetJustifyH("LEFT")
@@ -4704,8 +5847,8 @@ do
             f.close = close
 
             local btn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-            btn:SetSize(140, 22)
-            btn:SetPoint("BOTTOM", f, "BOTTOM", 0, 18)
+            btn:SetSize(160, 24)
+            btn:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -4, 5)
             btn:SetText("OK")
             f.btn = btn
 
@@ -4718,12 +5861,20 @@ do
                     local key = tostring(spec):lower():gsub("%s+", "")
                     if key == "coins" or key == "coin" or key == "copper" or key == "money" then
                         sid = (SOUNDKIT and (SOUNDKIT.LOOT_WINDOW_COIN_SOUND or SOUNDKIT.LOOTWINDOWCOINSOUND)) or 120
+                    elseif key == "accept" or key == "accepted" then
+                        sid = (SOUNDKIT and SOUNDKIT.IG_QUEST_LIST_SELECT) or "igQuestListSelect"
+                    elseif key == "start" or key == "activate" or key == "activation" then
+                        sid = (SOUNDKIT and SOUNDKIT.IG_CHARACTER_INFO_TAB) or "igCharacterInfoTab"
+                    elseif key == "open" then
+                        sid = (SOUNDKIT and SOUNDKIT.IG_QUEST_LIST_OPEN) or "igQuestListOpen"
                     elseif key == "failed" or key == "fail" then
-                        sid = (SOUNDKIT and SOUNDKIT.IG_QUEST_FAILED) or "igQuestFailed"
+                        -- Classic-safe: some clients don't expose SOUNDKIT.IG_QUEST_FAILED; use known SoundKitID 847.
+                        sid = (SOUNDKIT and SOUNDKIT.IG_QUEST_FAILED) or 847 or "igQuestFailed"
                     end
                 end
                 if sid then
-                    pcall(PlaySound, sid)
+                    -- Prefer SFX channel (same as most UI sounds).
+                    pcall(PlaySound, sid, "SFX")
                 end
             end
             addon._cgaPlayWindowSound = CGA_PlayWindowSound
@@ -4802,6 +5953,10 @@ do
             w.title:SetText(cfg.title or def.title or "")
             w.text:SetText(ExpandWindowTextPlaceholders(cfg.text or def.tooltip or ""))
             w.btn:SetText(cfg.buttonLabel or "OK")
+            -- Portrait: show the target NPC portrait like quest/gossip frames.
+            if w._cgaPortrait and SetPortraitTexture and UnitExists("target") then
+                pcall(SetPortraitTexture, w._cgaPortrait, "target")
+            end
             w:Show()
             if w._cgaRefreshLayout then
                 w:_cgaRefreshLayout()
@@ -4852,7 +6007,8 @@ do
             if not npcId then return end
 
             for _, row in ipairs(addon.AchievementRowModel or {}) do
-                if row and not IsAchievementAlreadyCompleted(row) then
+                local achId = row and (row.id or row.achId)
+                if row and not IsAchievementAlreadyCompleted(row) and not IsAchievementTerminalFailed(achId) then
                     local def = row._def
                     local sn = def and def.startNpc
                     local startNpcId = sn and (tonumber(sn.npcId) or tonumber(sn.id)) or tonumber(def and def.startNpcId)
@@ -5045,9 +6201,9 @@ do
             if not npcId or not addon then return nil end
             local rows = addon.AchievementRowModel or {}
             for _, row in ipairs(rows) do
-                if row and not IsAchievementAlreadyCompleted(row) then
+                local achId = row and (row.id or row.achId)
+                if row and not IsAchievementAlreadyCompleted(row) and not IsAchievementTerminalFailed(achId) then
                     local def = row._def
-                    local achId = row.id or row.achId
                     if def and achId and def.attemptEnabled then
                         local sn = def.startNpc
                         -- New UX: startNpc windows are opened on target + interact distance (no overlay injection).
@@ -5488,10 +6644,45 @@ do
                 return oa < ob
             end)
 
+            -- Snapshot unlockedBy eligibility at the START of this kill event only.
+            -- Without this, completing chain step N in the same loop iteration unlocks step N+1,
+            -- and the SAME kill can immediately satisfy and complete N+1 (double completion on one rat).
+            local unlockedByAtKillStart = {}
+            do
+                local isUnlockedBy = addon and addon.IsUnlockedBy
+                if type(isUnlockedBy) == "function" then
+                    for _, row in ipairs(rowsWithTracker) do
+                        local id = row and (row.achId or row.id)
+                        local def = row and row._def
+                        local key = id and tostring(id) or nil
+                        if key and def then
+                            if def.unlockedBy ~= nil then
+                                unlockedByAtKillStart[key] = isUnlockedBy(def) and true or false
+                            else
+                                unlockedByAtKillStart[key] = true
+                            end
+                        end
+                    end
+                end
+            end
+
+            local function rowWasUnlockedAtKillStart(row)
+                local id = row and (row.achId or row.id)
+                local def = row and row._def
+                if not id or not def or def.unlockedBy == nil then
+                    return true
+                end
+                local key = tostring(id)
+                local v = unlockedByAtKillStart[key]
+                return v ~= false -- nil = IsUnlockedBy unavailable; allow processing
+            end
+
             local anyAwarded = false
             for _, row in ipairs(rowsWithTracker) do
-                if row.killTracker(destGUID) and MarkRowCompletedWithToast(row) then
-                    anyAwarded = true
+                if rowWasUnlockedAtKillStart(row) then
+                    if row.killTracker(destGUID) and MarkRowCompletedWithToast(row) then
+                        anyAwarded = true
+                    end
                 end
             end
 
@@ -5656,6 +6847,58 @@ do
                             end
                         end
                     end
+                elseif subevent == "ENVIRONMENTAL_DAMAGE" then
+                    -- Attempt helper: track best single-fall HP loss percentage.
+                    -- We only process player fall damage events.
+                    local environmentalType = param12
+                    local amount = tonumber(param13) or 0
+                    local playerGUID = UnitGUID("player")
+                    local envType = tostring(environmentalType or ""):upper()
+                    local isFallingDamage = (envType == "FALLING") or (envType == "CHUTE") or (string_find(envType, "FALL", 1, true) ~= nil) or (string_find(envType, "CHUTE", 1, true) ~= nil)
+                    if isFallingDamage and destGUID == playerGUID and amount > 0 then
+                        local maxHp = UnitHealthMax("player") or 0
+                        if maxHp > 0 then
+                            local lossPct = (amount / maxHp) * 100
+                            local rows = addon.AchievementRowModel
+                            if rows then
+                                for _, row in ipairs(rows) do
+                                    if not IsAchievementAlreadyCompleted(row) then
+                                        local id = AchievementRowDbKey(row)
+                                        local def = (row and row._def) or (addon and addon.AchievementDefs and id and addon.AchievementDefs[tostring(id)]) or nil
+                                        local requiredPct = def and tonumber(def.requiredFallHpLossPct) or nil
+                                        local attemptActive = id and (AttemptIsActive(id) or AttemptIsActive(tostring(id)))
+                                        if id and def and def.attemptEnabled and requiredPct and requiredPct > 0 and attemptActive then
+                                            local p = GetProgress(id) or {}
+                                            local previousBest = tonumber(p.maxFallHpLossPct) or 0
+                                            local newBest = (lossPct > previousBest) and lossPct or previousBest
+                                            SetProgress(id, "maxFallHpLossPct", newBest)
+                                            SetProgress(id, "lastFallHpLossPct", lossPct)
+                                            local neededRuns = tonumber(def.attemptsAllowed) or 0
+                                            local successRuns = tonumber(p.fallSuccessCount) or 0
+                                            if row.Sub and type(row.Sub.SetText) == "function" and neededRuns > 0 then
+                                                row.Sub:SetText(string_format("Best fall: %.1f%% (%d/%d)", newBest, successRuns, neededRuns))
+                                            end
+                                            if lossPct >= requiredPct then
+                                                successRuns = successRuns + 1
+                                                SetProgress(id, "fallSuccessCount", successRuns)
+
+                                                if row.Sub and type(row.Sub.SetText) == "function" and neededRuns > 0 then
+                                                    row.Sub:SetText(string_format("Best fall: %.1f%% (%d/%d)", newBest, successRuns, neededRuns))
+                                                end
+
+                                                if neededRuns > 0 and successRuns >= neededRuns then
+                                                    MarkRowCompletedWithToast(row)
+                                                end
+                                            else
+                                                -- Not enough HP loss: do not consume remaining tries.
+                                                -- The achievement stays active until the required number of successful falls is reached.
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
                 elseif DAMAGE_SUBEVENTS[subevent] then
                     local playerGUID = UnitGUID("player")
                     local shouldProcess = false
@@ -5735,7 +6978,7 @@ do
                             -- Use stored tap denial status (NPC is cleared from target when it dies, so we can't check at kill time)
                             local isTapDenied = npcTapDenied[destGUID]
                             if isTapDenied == true then
-                                print("|cff008066[Hardcore Achievements]|r |cffffd100Achievement cannot be fulfilled: Unit was not your tag.|r")
+                                print("|cff008066[Custom Guild Achievements]|r |cffffd100Achievement cannot be fulfilled: Unit was not your tag.|r")
                                 if addon.EventLogAdd then
                                     addon.EventLogAdd("Kill processing skipped (tap denied / not your tag) for GUID " .. tostring(destGUID))
                                 end
@@ -6024,6 +7267,18 @@ do
                                     MarkRowCompletedWithToast(row)
                                 end
                             end
+                        end
+                    end
+                end
+
+                -- Also evaluate custom item trackers (customItem) on inventory changes,
+                -- so "equipped" achievements update immediately when gear changes.
+                for _, row in ipairs(addon.AchievementRowModel or {}) do
+                    if not IsAchievementAlreadyCompleted(row) and type(row.itemTracker) == "function" then
+                        local ok, shouldComplete = pcall(row.itemTracker)
+                        if ok and shouldComplete == true then
+                            MarkRowCompletedWithToast(row)
+                            break
                         end
                     end
                 end
@@ -6584,7 +7839,7 @@ do
         if Profession then Profession.RefreshAll() end
 
         addon.Initializing = false
-        print("|cff008066[Hardcore Achievements]|r |cffffd100All achievements loaded!|r")
+        print("|cff008066[Custom Guild Achievements]|r |cffffd100All achievements loaded!|r")
 
         -- Nothing else to do after finalization
         f:UnregisterAllEvents()
@@ -6598,7 +7853,7 @@ do
                 if type(registerFunc) == "function" then
                     local ok, err = pcall(registerFunc)
                     if not ok then
-                        print("|cff008066[Hardcore Achievements]|r |cffff0000Error registering achievement: " .. tostring(err) .. "|r")
+                        print("|cff008066[Custom Guild Achievements]|r |cffff0000Error registering achievement: " .. tostring(err) .. "|r")
                     end
                 end
             end

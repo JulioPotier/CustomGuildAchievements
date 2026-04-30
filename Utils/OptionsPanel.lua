@@ -56,12 +56,6 @@ end
 
 -- Helper function to check if award on kill is enabled
 local function IsAwardOnKillEnabled()
-    if type(GetCharDB) == "function" then
-        local _, cdb = GetCharDB()
-        if cdb and cdb.settings and cdb.settings.awardOnKill then
-            return true
-        end
-    end
     return false
 end
 
@@ -77,83 +71,6 @@ local function ShouldAnnounceInGuildChat()
         end
     end
     return true
-end
-
--- Create Discord frame (will be created on first use)
-local discordFrame = nil
-local DISCORD_LINK = "https://discord.gg/3KChDhux2D" --https://discord.gg/3KChDhux2D alternative link
-
-local function CreateDiscordFrame()
-    if discordFrame then return discordFrame end
-    
-    -- Create the main frame
-    discordFrame = CreateFrame("Frame", nil, UIParent)
-    discordFrame:SetSize(250, 250)
-    discordFrame:SetPoint("CENTER")
-    discordFrame:SetFrameStrata("DIALOG")
-    discordFrame:Hide()
-    
-    -- Create simple semi-transparent background
-    local bgTexture = discordFrame:CreateTexture(nil, "BACKGROUND")
-    bgTexture:SetTexture("Interface\\DialogFrame\\UI-DialogBox-Background")
-    bgTexture:SetAllPoints(discordFrame)
-    bgTexture:SetVertexColor(0, 0, 0, 1)
-    
-    -- Title
-    local titleText = discordFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    titleText:SetPoint("TOP", 0, -10)
-    titleText:SetText("Discord Support")
-    titleText:SetTextColor(1, 1, 1, 1)
-    
-    -- QR Code image (fully opaque, no transparency inheritance)
-    local placeholderIcon = discordFrame:CreateTexture(nil, "OVERLAY")
-    placeholderIcon:SetSize(175, 175)
-    placeholderIcon:SetPoint("TOP", titleText, "BOTTOM", 0, -10)
-    placeholderIcon:SetTexture("Interface\\AddOns\\CustomGuildAchievements\\Images\\DiscordQR.png")
-    placeholderIcon:SetAlpha(1.0) -- Fully opaque, don't inherit transparency
-    
-    -- Discord link (read-only input box)
-    local discordLinkBox = CreateFrame("EditBox", nil, discordFrame, "InputBoxTemplate")
-    discordLinkBox:SetSize(150, 32)
-    discordLinkBox:SetPoint("TOP", placeholderIcon, "BOTTOM", 0, -5)
-    discordLinkBox:SetAutoFocus(false)
-    discordLinkBox:SetText(DISCORD_LINK)
-    discordLinkBox:SetTextColor(0.345, 0.396, 0.949, 1) -- Discord blurple color
-    discordLinkBox:SetScript("OnEscapePressed", function(self)
-        self:ClearFocus()
-    end)
-    
-    -- Make read-only (disable editing)
-    discordLinkBox:SetScript("OnEditFocusGained", function(self)
-        -- Allow selection but prevent editing
-        self:HighlightText()
-    end)
-    
-    -- Make it appear read-only by preventing text changes
-    discordLinkBox:SetScript("OnChar", function(self)
-        -- Prevent any text input - restore original text
-        self:SetText(DISCORD_LINK)
-    end)
-    
-    -- Close button
-    local closeButton = CreateFrame("Button", nil, discordFrame, "UIPanelCloseButton")
-    closeButton:SetPoint("TOPRIGHT", -5, -5)
-    closeButton:SetScript("OnClick", function(self)
-        discordFrame:Hide()
-    end)
-    
-    -- Make frame movable
-    discordFrame:SetMovable(true)
-    discordFrame:EnableMouse(true)
-    discordFrame:RegisterForDrag("LeftButton")
-    discordFrame:SetScript("OnDragStart", discordFrame.StartMoving)
-    discordFrame:SetScript("OnDragStop", discordFrame.StopMovingOrSizing)
-    
-    -- Store references
-    discordFrame.discordLinkBox = discordLinkBox
-    discordFrame.placeholderIcon = placeholderIcon
-    
-    return discordFrame
 end
 
 -- =========================================================
@@ -459,7 +376,7 @@ local function CreateBackupRestoreFrame()
     importButton:SetScript("OnClick", function(self)
         local text = restoreEditBox:GetText()
         if not text or text:match("^%s*$") then
-            print("|cffff0000Hardcore Achievements:|r No data provided to import.")
+            print("|cffff0000Custom Guild Achievements:|r No data provided to import.")
             return
         end
         
@@ -471,16 +388,16 @@ local function CreateBackupRestoreFrame()
             if oldSuccess then
                 success = true
                 data = oldData
-                print("|cffffd100Hardcore Achievements:|r Using old format (non-encoded) backup.")
+                print("|cffffd100Custom Guild Achievements:|r Using old format (non-encoded) backup.")
             else
-                print("|cffff0000Hardcore Achievements:|r Failed to import database. Invalid backup string.")
+                print("|cffff0000Custom Guild Achievements:|r Failed to import database. Invalid backup string.")
                 return
             end
         end
         
         -- Validate that it looks like the full database structure
         if type(data) ~= "table" or not data.chars or type(data.chars) ~= "table" then
-            print("|cffff0000Hardcore Achievements:|r Invalid backup data format. Expected full database structure with 'chars' table.")
+            print("|cffff0000Custom Guild Achievements:|r Invalid backup data format. Expected full database structure with 'chars' table.")
             return
         end
         
@@ -507,8 +424,8 @@ local function CreateBackupRestoreFrame()
             HardcoreAchievementsDB = imported
             if addon then addon.HardcoreAchievementsDB = HardcoreAchievementsDB end
             
-            print("|cff00ff00Hardcore Achievements:|r Database imported successfully! All characters and settings have been restored.")
-            print("|cffffd100Hardcore Achievements:|r Reloading UI...")
+            print("|cff00ff00Custom Guild Achievements:|r Database imported successfully! All characters and settings have been restored.")
+            print("|cffffd100Custom Guild Achievements:|r Reloading UI...")
             
             -- Close the frame
             frame:Hide()
@@ -516,7 +433,7 @@ local function CreateBackupRestoreFrame()
             -- Reload UI to ensure everything is properly refreshed
             ReloadUI()
         else
-            print("|cffff0000Hardcore Achievements:|r Database not available.")
+            print("|cffff0000Custom Guild Achievements:|r Database not available.")
         end
     end)
     
@@ -532,7 +449,7 @@ end
 local function ExportDatabase()
     -- Access the full database structure
     if not addon or not addon.HardcoreAchievementsDB then
-        print("|cffff0000Hardcore Achievements:|r No database found.")
+        print("|cffff0000Custom Guild Achievements:|r No database found.")
         return
     end
     
@@ -577,6 +494,27 @@ local function CreateOptionsPanel()
     title:SetText("Custom Guild Achievements")
     --title:SetFont("Interface\\Addons\\MyAddon\\Fonts\\MyCustomFont.ttf", 20)
     title:SetTextColor(1, 1, 1, 1)
+
+    -- Version (from .toc metadata when available)
+    local version = "1.5333"
+    if C_AddOns and C_AddOns.GetAddOnMetadata then
+        local ok, v = pcall(C_AddOns.GetAddOnMetadata, addonName, "Version")
+        if ok and v and v ~= "" then version = v end
+    elseif GetAddOnMetadata then
+        local v = GetAddOnMetadata(addonName, "Version")
+        if v and v ~= "" then version = v end
+    end
+    local versionText = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    versionText:SetPoint("LEFT", title, "RIGHT", 10, 0)
+    versionText:SetText("|cff888888v" .. tostring(version) .. "|r")
+
+    -- Decorative guild tabard image
+    local tabard = panel:CreateTexture(nil, "ARTWORK")
+    tabard:SetTexture("Interface\\AddOns\\CustomGuildAchievements\\Images\\tabard-guild.png")
+    -- Keep a "tabard-like" aspect ratio (taller than wide) to avoid squishing.
+    tabard:SetSize(96, 96)
+    tabard:SetPoint("TOPRIGHT", -22, -10)
+    tabard:SetAlpha(1)
     
     -- Create subtitle/description
     local subtitle = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
@@ -621,20 +559,9 @@ local function CreateOptionsPanel()
     end)
     AddTooltipToCheckbox(disableScreenshotsCB, "Prevent the addon from taking screenshots when achievements are completed.")
 
-    -- Award on Kill checkbox
-    local awardOnKillCB = CreateFrame("CheckButton", nil, panel, "InterfaceOptionsCheckButtonTemplate")
-    awardOnKillCB:SetPoint("TOPLEFT", disableScreenshotsCB, "BOTTOMLEFT", 0, -8)
-    awardOnKillCB.Text:SetText("Award achievements on required kill instead of quest completion when available")
-    awardOnKillCB:SetChecked(GetSetting("awardOnKill", false))
-    awardOnKillCB:SetScript("OnClick", function(self)
-        local isChecked = self:GetChecked()
-        SetSetting("awardOnKill", isChecked)
-    end)
-    AddTooltipToCheckbox(awardOnKillCB, "If enabled, achievements that require an NPC kill will be awarded immediately on kill rather than waiting for quest completion.")
-
     -- Announce achievements in guild chat checkbox
     local announceInGuildChatCB = CreateFrame("CheckButton", nil, panel, "InterfaceOptionsCheckButtonTemplate")
-    announceInGuildChatCB:SetPoint("TOPLEFT", awardOnKillCB, "BOTTOMLEFT", 0, -8)
+    announceInGuildChatCB:SetPoint("TOPLEFT", disableScreenshotsCB, "BOTTOMLEFT", 0, -8)
     announceInGuildChatCB.Text:SetText("Announce achievements in guild chat")
     announceInGuildChatCB:SetChecked(GetSetting("announceInGuildChat", true))
     announceInGuildChatCB:SetScript("OnClick", function(self)
@@ -694,27 +621,15 @@ local function CreateOptionsPanel()
     -- Support text
     local supportText = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     supportText:SetPoint("TOPLEFT", supportCategoryTitle, "BOTTOMLEFT", 0, -8)
-    supportText:SetText("Found a bug or want to make an appeal? Contact me via Discord! All appeals must have clear evidence of your player name, level, and what the issue is.")
+    supportText:SetText("Found a bug or want to make an appeal? Please provide clear evidence of your player name, level, and what the issue is.")
     supportText:SetTextColor(0.8, 0.8, 0.8, 1)
     supportText:SetWidth(600)
     supportText:SetJustifyH("LEFT")
     supportText:SetJustifyV("TOP")
-    
-    -- Discord button
-    local discordButton = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-    discordButton:SetPoint("TOPLEFT", supportText, "BOTTOMLEFT", 0, -12)
-    discordButton:SetText("Discord")
-    discordButton:SetWidth(120)
-    discordButton:SetHeight(25)
-    discordButton:SetScript("OnClick", function(self)
-        local frame = CreateDiscordFrame()
-        frame:Show()
-    end)
-    AddTooltipToCheckbox(discordButton, "Click to open Discord support")
 
     -- Logs button
     local logsButton = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-    logsButton:SetPoint("TOPLEFT", discordButton, "TOPRIGHT", 12, 0)
+    logsButton:SetPoint("TOPLEFT", supportText, "BOTTOMLEFT", 0, -12)
     logsButton:SetText("Logs")
     logsButton:SetWidth(120)
     logsButton:SetHeight(25)
@@ -729,13 +644,13 @@ local function CreateOptionsPanel()
     -- Credits
     -- =========================================================
     local creditsCategoryTitle = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-    creditsCategoryTitle:SetPoint("TOPLEFT", discordButton, "BOTTOMLEFT", 0, -15)
+    creditsCategoryTitle:SetPoint("TOPLEFT", logsButton, "BOTTOMLEFT", 0, -15)
     creditsCategoryTitle:SetText("|cff008066Credits|r")
     
     -- Credits text
     local creditsText = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     creditsText:SetPoint("TOPLEFT", creditsCategoryTitle, "BOTTOMLEFT", 0, -8)
-    creditsText:SetText("Special thanks to:\n\n|cffff8000Viviway|r for the help with the addon and the overall UI design.\n|cffff8000Tulhur|r for the help with tracking down bugs and all his suggestions.\n|cffff8000BonniesDad|r for supplying the Ultra Hardcore addon and allowing Hardcore Achivements to thrive.\n|cffff8000CDank|r for creating the Hardcore TBC community and spreading the word about Hardcore Achivements.\n|cffff8000mocktail|r for creating the Hardcore addon and allowing Hardcore Achivements to thrive.")
+    creditsText:SetText("Forked from |cffffff00HardcoreAchievements|r\nDev by |cffffff00Rogue2112|r")
     creditsText:SetTextColor(0.8, 0.8, 0.8, 1)
     creditsText:SetWidth(600)
     creditsText:SetJustifyH("LEFT")
@@ -744,14 +659,12 @@ local function CreateOptionsPanel()
     -- Store references for future use
     panel.checkboxes = {
         disableScreenshots = disableScreenshotsCB,
-        awardOnKill = awardOnKillCB,
         announceInGuildChat = announceInGuildChatCB,
         modernRows = modernRowsCB,
     }
     panel.modernRows = modernRowsCB
     panel.buttons = {
         resetAchievementsTab = resetTabButton,
-        discord = discordButton,
         backupRestore = backupRestoreButton,
     }
 
@@ -760,9 +673,6 @@ local function CreateOptionsPanel()
         -- Update checkbox state from database
         if disableScreenshotsCB then
             disableScreenshotsCB:SetChecked(GetSetting("disableScreenshots", false))
-        end
-        if awardOnKillCB then
-            awardOnKillCB:SetChecked(GetSetting("awardOnKill", false))
         end
         if announceInGuildChatCB then
             announceInGuildChatCB:SetChecked(GetSetting("announceInGuildChat", true))

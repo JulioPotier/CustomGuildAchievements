@@ -424,6 +424,13 @@ local function RegisterAchievementDef(def, overrides)
         bossOrder = def.bossOrder,
         -- Meta-specific fields
         requiredAchievements = def.requiredAchievements,
+        -- Lightweight dependency trigger alias (auto-complete when all done, auto-fail if any failed)
+        achiIds = def.achiIds,
+        -- Generic count trigger: complete when character has completed at least N addon achievements.
+        nbAchis = def.nbAchis,
+        -- Visibility / chain unlock: hide until these achievements are completed.
+        -- String: single id. Table: all must be completed to unlock.
+        unlockedBy = def.unlockedBy,
         achievementOrder = def.achievementOrder,
         -- Common fields
         faction = def.faction,

@@ -496,7 +496,7 @@ local function registerRaidAchievement(def)
         -- Store points (raids do not support solo doubling)
         StorePointsAtKill()
 
-        print("|cff008066[Hardcore Achievements]|r |cffffd100" .. GetRaidBossName(npcId) .. " killed as part of achievement: " .. title .. "|r")
+        print("|cff008066[Custom Guild Achievements]|r |cffffd100" .. GetRaidBossName(npcId) .. " killed as part of achievement: " .. title .. "|r")
         if addon.EventLogAdd then
           addon.EventLogAdd("Raid boss kill counted: " .. GetRaidBossName(npcId) .. " (npc " .. tostring(npcId) .. ") — " .. title .. " [" .. tostring(achId) .. "]")
         end
