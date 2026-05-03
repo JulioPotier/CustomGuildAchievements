@@ -23,7 +23,7 @@ local TARGETS_MEET_KINGS_LIST = {
   [1747] = "Anduin Wrynn",
   [2784] = "King Magni Bronzebeard",
   [7937] = "High Tinker Mekkatorque",
-  [7999] = "Tyrande Whisperwind",
+  --[7999] = "Tyrande Whisperwind",
 }
 
 GuildAchievements = {
@@ -63,14 +63,48 @@ GuildAchievements = {
       return false
     end,
   },
+  -- // dropItemOn: buy bread and "offer" it to Stephanie Turner
+  {
+    achId = "GUILD-BUY-ME-SOME-BREAD-11",
+    title = "Buy me some bread (bring item test)",
+    tooltip =
+      "Bring some bread to Stephanie Turner.",
+    icon = 133964, -- INV_Misc_Food_11 (bread)
+    points = 5,
+    level = nil, -- no maxLevel: keep startNpc available at any level
+    startNpc = {
+      npcId = 6174, -- Stephanie Turner
+      coords = { mapId = 1453, x = 0.570680975914, y = 0.61753934621811 }, -- Stormwind City (coords => map pin)
+      window = {
+        title = "Buy me some bread",
+        text =
+          "Hello " .. rawPlayerName .. "!\n\n"
+          .. "Could you buy me a |cffffffff[Tough Hunk of Bread]|r from Thomas Miller?\n\n"
+          .. "Bring it back here, I cannot go anywhere, I'm stuck here.",
+        buttonLabel = "I'll be right back",
+        buttonSound = "accept",
+        callback = function()
+          return false
+        end,
+      },
+    },
+    dropItemOn = { itemId = 4540, nbItem = 1, npcId = 6174 },
+    zone = "Stormwind City",
+  },
   -- // target some npc
   {
     achId = ACH_MEET_KINGS,
-    title = "Meet them all.",
-    tooltip = "Meet the Kings of the Alliance realms.",
-    icon = 236683,
-    points = 40,
+    title = "Royal Rush (custom tracker test)",
+    tooltip = "Open gossip with a Royal Guard to start your run, then speak with the Kings before the timer expires.",
+    icon = 135981,
+    points = 10,
     level = 60,
+    attemptEnabled = true,
+    startNpc = {
+      npcId = 1756,
+      text = "\nRoyal rush\n\nHello " .. rawPlayerName .. "! You will have to find your way to the Stormwind Keep and speak with Anduin Wrynn to win this achievement.\n\nTry your best at Adventure Co.",
+      buttonLabel = "Accept quest",
+    },
     requiredTarget = TARGETS_MEET_KINGS_LIST,
     trackTargetOnChange = true,
     customIsCompleted = function()
@@ -86,8 +120,8 @@ GuildAchievements = {
   },
   -- // TALK TO someone
   {
-    achId = "GUILD-TALK-KATRANA-1749",
-    title = "An audience with Lady Prestor",
+    achId = "GUILD-TALK-KATRANA-1749-03",
+    title = "An audience with Lady Prestor (talk to test)",
     tooltip = "Speak with Lady Katrana Prestor in Stormwind.",
     icon = 135981,
     points = 5,
@@ -96,38 +130,10 @@ GuildAchievements = {
       [1749] = "Lady Katrana Prestor",
     },
   },
-  -- // Attempt: gossip with Lady Prestor (1749) starts the run; speak with Anduin (1747) before timer ends
-  --[[
-  {
-    achId = "GUILD-ATTEMPT-ROYAL-RUSH-TEST7",
-    title = "Royal rush",
-    tooltip = "Open gossip with Lady Katrana Prestor in Stormwind Keep to start your run, then speak with Anduin Wrynn before the timer expires.",
-    icon = 135981,
-    points = 10,
-    level = 60,
-    attemptEnabled = true,
-    startNpc = {
-      npcId = 1749,
-      text = "\nRoyal rush\n\nHello " .. rawPlayerName .. "! You will have to find your way to the Stormwind Keep and speak with Anduin Wrynn to win this achievement.\n\nTry your best at Adventure Co.",
-      buttonLabel = "Accept quest",
-      
-      -- onClick = function(cfg, npcId, def)
-      --   if addon and addon.AttemptActivate then
-      --     addon.AttemptActivate(cfg.achId, "npc:" .. tostring(npcId), nil)
-      --   end
-      -- end,
-    },
-    timerSet = 300,
-    zone = "5 min",
-    requiredTarget = {
-      [1747] = "Anduin Wrynn",
-    },
-  },--]]
-  -- // Attempt: loot a Water Barrel (3658) starts each try; up to 3 runs; speak with Magni in Ironforge
   {
     achId = "GUILD-ATTEMPT-BARREL-MAGNI-3",
-    title = "Barrel relay (3 tries)",
-    tooltip = "Open a Water Barrel (object 3658) to start a run — you have three starts total. Reach Ironforge and speak with King Magni Bronzebeard before the timer runs out. Each new barrel open begins another try if you are not already in a run.",
+    title = "Barrel relay (3 attempts test)",
+    tooltip = "Open a Water Barrel to start a run — you have three starts total. Reach Ironforge and speak with King Magni Bronzebeard before the timer runs out. Each new barrel open begins another try if you are not already in a run.",
     icon = 132797,
     points = 15,
     level = 60,
@@ -146,7 +152,7 @@ GuildAchievements = {
   -- // Attempt: no mount / druid forms / hunter aspects / ghost wolf when flags are set (each optional)
   {
     achId = "GUILD-ATTEMPT-NEVER-FASTERRR",
-    title = "The Saddle Is Lava",
+    title = "The Saddle Is Lava (no mount etc test)",
     tooltip = "Talk to any Stormwind Guard to start your vow. Then head to King Magni Bronzebeard in Ironforge without shortcut movement.\n\nWhile the attempt is active: you must stay in walk (no run toggle). Mounting, Cat Form, Travel Form, hunter Cheetah/Pack aspects, or Ghost Wolf fail the achievement (each controlled by its own flag). Potions, gear and passive talents do not.",
     icon = 132261,
     points = 10,
@@ -157,7 +163,7 @@ GuildAchievements = {
     failOnDruidTravelForm = true,
     failOnHunterAspect = true,
     failOnShamanGhostWolf = true,
-    walkOnly = true,
+    --walkOnly = true,
     startNpc = {
       npcId = 68,
       window = {
@@ -180,8 +186,8 @@ GuildAchievements = {
   },
   -- // Target secret
   {
-    achId = "GUILD-TARGET-ANDUIN-1747",
-    title = "Talk to someone important",
+    achId = "GUILD-TARGET-ANDUIN-1747-001",
+    title = "Talk to someone important (secret tracker)",
     tooltip = "Speak with someone important.",
     icon = 134902,
     points = 5,
@@ -194,10 +200,27 @@ GuildAchievements = {
     secretTracker = true,
     checkInteractDistance = true,
   },  
-  -- // OPEN object
+
+  {
+    achId = "GUILD-TARGET-HIGHLORD-1748-002",
+    secretTitle = "A Knight from the Ebon Blade (secret target)",
+    secretTooltip = "Speak with someone really important.",
+    icon = 134902,
+    points = 5,
+    level = 60,
+    zone = "Stormwind City",
+    requiredTarget = {
+      [1748] = "Highlord Bolvar Fordragon",
+    },
+    secret = true,
+    secretTracker = true,
+    title = "Thank you " .. rawPlayerName .. "!",
+    tooltip = "I appreciate your help, " .. rawPlayerName .. "!",
+    checkInteractDistance = true,
+  },    -- // OPEN object
   {
     achId = "GUILD-OPEN-WATER-BARREL-3658",
-    title = "A sip of water",
+    title = "A sip of water (open object test)",
     tooltip = "Open a Water Barrel (GameObject ID 3658).",
     icon = 132797,
     points = 5,
@@ -208,28 +231,15 @@ GuildAchievements = {
   },
   -- // Accurate zone kill count
   {
-    achId = "Murloc in Duskwood",
-    title = "Murloc in Duskwood",
-    level = nil,
-    tooltip = "Find and kill a " .. classColor .. "Murloc|r in",
+    achId = "MURLOC-IN-DUSKWOOD-01",
+    title = "Murloc in Duskwood (accurate zone kill test)",
+    tooltip = "Find and kill a " .. classColor .. "Murloc|r in Duskwood.",
     icon = 134169,
+    points = 5,
+    level = nil,
     targetNpcId = 46,
     zone = "Duskwood",
-    -- UiMapID (locale-neutral); kill counts only in this zone tree. Verify in-game: /run print(C_Map.GetBestMapForUnit("player"))
     zoneAccurate = 1431,
-  },
-  -- // Emote trigger: target an NPC and /wave
-  {
-    achId = "GUILD-EMOTE-WAVE-46",
-    title = "Say hello to the Stormwind Guard",
-    level = nil,
-    tooltip = "Target a Stormwind Guard and perform a /wave.",
-    icon = 135993,
-    points = 5,
-    targetNpcId = 68,
-    onEmote = "wave",
-    checkInteractDistance = true,
-    withIcon = "bubble",
   },
 }
 
@@ -263,43 +273,45 @@ if addon then
 
   for _, def in ipairs(GuildAchievements) do
     def.isGuild = true
+    -- IMPORTANT: freeze `def` for the queued closure (PLAYER_LOGIN runs later).
+    local d = def
     table_insert(queue, function()
-      if (not def.onEmote) and (not def.customKill) and (def.targetNpcId or def.requiredKills or def.requiredQuestId) and addon.registerQuestAchievement then
+      if (not d.onEmote) and (not d.customKill) and (d.targetNpcId or d.requiredKills or d.requiredQuestId) and addon.registerQuestAchievement then
         addon.registerQuestAchievement{
-          achId = def.achId,
-          requiredQuestId = def.requiredQuestId,
-          targetNpcId = def.targetNpcId,
-          requiredKills = def.requiredKills,
-          maxLevel = def.level,
-          faction = def.faction,
-          race = def.race,
-          class = def.class,
-          allowKillsBeforeQuest = def.allowKillsBeforeQuest,
-          zoneAccurate = def.zoneAccurate,
+          achId = d.achId,
+          requiredQuestId = d.requiredQuestId,
+          targetNpcId = d.targetNpcId,
+          requiredKills = d.requiredKills,
+          maxLevel = d.level,
+          faction = d.faction,
+          race = d.race,
+          class = d.class,
+          allowKillsBeforeQuest = d.allowKillsBeforeQuest,
+          zoneAccurate = d.zoneAccurate,
         }
       end
       if RegisterAchievementDef then
-        RegisterAchievementDef(def)
+        RegisterAchievementDef(d)
       end
-      if def.customIsCompleted and addon.RegisterCustomAchievement then
-        addon.RegisterCustomAchievement(def.achId, nil, def.customIsCompleted)
+      if d.customIsCompleted and addon.RegisterCustomAchievement then
+        addon.RegisterCustomAchievement(d.achId, nil, d.customIsCompleted)
       end
       local CreateAchievementRow = addon.CreateAchievementRow
       local AchievementPanel = addon.AchievementPanel
       if CreateAchievementRow and AchievementPanel then
         CreateAchievementRow(
           AchievementPanel,
-          def.achId,
-          def.title,
-          def.tooltip,
-          def.icon,
-          def.level,
-          def.points or 0,
-          GetKillTracker(def),
-          GetQuestTracker(def),
-          def.staticPoints,
-          def.zone,
-          def
+          d.achId,
+          d.title,
+          d.tooltip,
+          d.icon,
+          d.level,
+          d.points or 0,
+          GetKillTracker(d),
+          GetQuestTracker(d),
+          d.staticPoints,
+          d.zone,
+          d
         )
       end
     end)

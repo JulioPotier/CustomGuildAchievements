@@ -2480,6 +2480,12 @@ local function TrackAchievement(self, achievementId, title)
     SaveTrackedAchievements()
     
     Update(self)
+    -- Sync Character Panel list indicators (gold checkmark on tracked rows)
+    if addon and type(addon.UpdateAllTrackedIndicators) == "function" then
+        pcall(function()
+            addon.UpdateAllTrackedIndicators()
+        end)
+    end
 end
 
 -- Public API: Remove achievement from tracker
@@ -2494,6 +2500,11 @@ local function UntrackAchievement(self, achievementId)
     if removed then
         SaveTrackedAchievements()
         Update(self)
+        if addon and type(addon.UpdateAllTrackedIndicators) == "function" then
+            pcall(function()
+                addon.UpdateAllTrackedIndicators()
+            end)
+        end
     end
 end
 

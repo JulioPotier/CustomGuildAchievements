@@ -402,7 +402,7 @@ local function CreateBackupRestoreFrame()
         end
         
         -- Import the entire database structure
-        if addon and addon.HardcoreAchievementsDB then
+        if addon and addon.CustomGuildAchievementsDB then
             -- Deep copy function
             local function DeepCopy(orig)
                 local orig_type = type(orig)
@@ -421,8 +421,8 @@ local function CreateBackupRestoreFrame()
             
             -- Replace the entire database with imported data (write to SavedVariables global so it persists)
             local imported = DeepCopy(data)
-            HardcoreAchievementsDB = imported
-            if addon then addon.HardcoreAchievementsDB = HardcoreAchievementsDB end
+            CustomGuildAchievementsDB = imported
+            if addon then addon.CustomGuildAchievementsDB = CustomGuildAchievementsDB end
             
             print("|cff00ff00Custom Guild Achievements:|r Database imported successfully! All characters and settings have been restored.")
             print("|cffffd100Custom Guild Achievements:|r Reloading UI...")
@@ -448,7 +448,7 @@ end
 -- Function to export database
 local function ExportDatabase()
     -- Access the full database structure
-    if not addon or not addon.HardcoreAchievementsDB then
+    if not addon or not addon.CustomGuildAchievementsDB then
         print("|cffff0000Custom Guild Achievements:|r No database found.")
         return
     end
@@ -469,7 +469,7 @@ local function ExportDatabase()
         return copy
     end
     
-    local exportData = DeepCopy(addon.HardcoreAchievementsDB)
+    local exportData = DeepCopy(addon.CustomGuildAchievementsDB)
     
     -- Serialize, compress, and encode the data
     local encoded = addon.EncodeData(exportData)

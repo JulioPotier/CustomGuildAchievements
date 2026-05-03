@@ -56,16 +56,16 @@ local function ApplyDropdownBorder(frame)
         return
     end
 
-    local background = frame.__HCABackground
+    local background = frame.__CGABackground
     if not background then
         background = frame:CreateTexture(nil, "BACKGROUND")
-        frame.__HCABackground = background
+        frame.__CGABackground = background
     end
 
-    local border = frame.__HCAThinBorder
+    local border = frame.__CGAThinBorder
     if not border then
         border = CreateFrame("Frame", nil, frame)
-        frame.__HCAThinBorder = border
+        frame.__CGAThinBorder = border
         border:SetAllPoints(frame)
 
         border.top = border:CreateTexture(nil, "OVERLAY")
@@ -89,8 +89,8 @@ local function ApplyDropdownBorder(frame)
         border.right:SetWidth(1)
     end
 
-    local existingBackground = frame.__HCABackground
-    local existingBorder = frame.__HCAThinBorder
+    local existingBackground = frame.__CGABackground
+    local existingBorder = frame.__CGAThinBorder
 
     local regions = { frame:GetRegions() }
     for _, region in ipairs(regions) do

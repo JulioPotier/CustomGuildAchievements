@@ -20,9 +20,9 @@ local string_format = string.format
 local string_byte = string.byte
 local string_gmatch = string.gmatch
 local AdminCommandHandler = {}
-local COMM_PREFIX = "HCA_Admin_Cmd" -- AceComm prefix for admin commands
-local RESPONSE_PREFIX = "HCA_Admin_Resp" -- AceComm prefix for responses (max 16 chars)
-local PRECIOUS_COMPLETE_PREFIX = "HCA_Fellowship" -- AceComm prefix for Precious completion
+local COMM_PREFIX = "CGA_Admin_Cmd" -- AceComm prefix for admin commands
+local RESPONSE_PREFIX = "CGA_Admin_Resp" -- AceComm prefix for responses (max 16 chars)
+local PRECIOUS_COMPLETE_PREFIX = "CGA_Fellowship" -- AceComm prefix for Precious completion
 local MAX_PAYLOAD_AGE = 300 -- 5 minutes in seconds
 
 -- Callback registry for Precious completion messages
@@ -31,19 +31,19 @@ local preciousCompletionCallbacks = {}
 -- Debug system: Helper functions for debug messages
 local function GetDebugEnabled()
     if not addon then return false end
-    addon.HardcoreAchievementsDB = addon.HardcoreAchievementsDB or {}
-    return addon.HardcoreAchievementsDB.debugEnabled or false
+    addon.CustomGuildAchievementsDB = addon.CustomGuildAchievementsDB or {}
+    return addon.CustomGuildAchievementsDB.debugEnabled or false
 end
 
 local function SetDebugEnabled(enabled)
     if not addon then return end
-    addon.HardcoreAchievementsDB = addon.HardcoreAchievementsDB or {}
-    addon.HardcoreAchievementsDB.debugEnabled = enabled and true or false
+    addon.CustomGuildAchievementsDB = addon.CustomGuildAchievementsDB or {}
+    addon.CustomGuildAchievementsDB.debugEnabled = enabled and true or false
 end
 
 local function DebugPrint(message)
     if GetDebugEnabled() then
-        print("|cff008066[HCA DEBUG]|r |cffffd100" .. tostring(message) .. "|r")
+        print("|cff008066[CGA DEBUG]|r |cffffd100" .. tostring(message) .. "|r")
     end
 end
 if addon then addon.DebugPrint = DebugPrint end
@@ -52,16 +52,16 @@ if addon then addon.DebugPrint = DebugPrint end
 -- This key is NOT in source code and must be set by the admin
 local function GetAdminSecretKey()
     if not addon then return nil end
-    addon.HardcoreAchievementsDB = addon.HardcoreAchievementsDB or {}
-    return addon.HardcoreAchievementsDB.adminSecretKey
+    addon.CustomGuildAchievementsDB = addon.CustomGuildAchievementsDB or {}
+    return addon.CustomGuildAchievementsDB.adminSecretKey
 end
 
 -- SECURITY: Set admin secret key (only accessible via slash command)
 local function SetAdminSecretKey(key)
     if not addon then return false end
-    addon.HardcoreAchievementsDB = addon.HardcoreAchievementsDB or {}
+    addon.CustomGuildAchievementsDB = addon.CustomGuildAchievementsDB or {}
     if key and #key >= 16 then
-        addon.HardcoreAchievementsDB.adminSecretKey = key
+        addon.CustomGuildAchievementsDB.adminSecretKey = key
         return true
     end
     return false
@@ -143,29 +143,29 @@ local function ValidatePayload(payload, sender)
     
     -- SECURITY: Check nonce to prevent replay attacks
     -- Store used nonces in database (with expiration)
-    if not addon or not addon.HardcoreAchievementsDB then return false, "Database not initialized" end
-    if not addon.HardcoreAchievementsDB.adminNonces then
-        addon.HardcoreAchievementsDB.adminNonces = {}
+    if not addon or not addon.CustomGuildAchievementsDB then return false, "Database not initialized" end
+    if not addon.CustomGuildAchievementsDB.adminNonces then
+        addon.CustomGuildAchievementsDB.adminNonces = {}
     end
     
     -- Clean old nonces (older than MAX_PAYLOAD_AGE)
     local noncesToRemove = {}
-    for nonce, nonceTime in pairs(addon.HardcoreAchievementsDB.adminNonces) do
+    for nonce, nonceTime in pairs(addon.CustomGuildAchievementsDB.adminNonces) do
         if currentTime - nonceTime > MAX_PAYLOAD_AGE then
             table_insert(noncesToRemove, nonce)
         end
     end
     for _, nonce in ipairs(noncesToRemove) do
-        addon.HardcoreAchievementsDB.adminNonces[nonce] = nil
+        addon.CustomGuildAchievementsDB.adminNonces[nonce] = nil
     end
     
     -- Check if nonce was already used (replay attack)
-    if addon.HardcoreAchievementsDB.adminNonces[payload.nonce] then
+    if addon.CustomGuildAchievementsDB.adminNonces[payload.nonce] then
         return false, "Nonce already used (replay attack detected)"
     end
     
     -- Store nonce to prevent reuse
-    addon.HardcoreAchievementsDB.adminNonces[payload.nonce] = currentTime
+    addon.CustomGuildAchievementsDB.adminNonces[payload.nonce] = currentTime
     
     return true, "Valid"
 end
@@ -302,8 +302,8 @@ local function ProcessDeleteAchievementCommand(payload, sender)
     end
     
     -- Log the action
-    if not addon.HardcoreAchievementsDB.adminCommands then addon.HardcoreAchievementsDB.adminCommands = {} end
-    table_insert(addon.HardcoreAchievementsDB.adminCommands, {
+    if not addon.CustomGuildAchievementsDB.adminCommands then addon.CustomGuildAchievementsDB.adminCommands = {} end
+    table_insert(addon.CustomGuildAchievementsDB.adminCommands, {
         timestamp = time(),
         commandType = "delete_achievement",
         achievementId = payload.achievementId,
@@ -315,8 +315,8 @@ local function ProcessDeleteAchievementCommand(payload, sender)
     })
     
     -- Keep only last 100 commands
-    if #addon.HardcoreAchievementsDB.adminCommands > 100 then
-        table_remove(addon.HardcoreAchievementsDB.adminCommands, 1)
+    if #addon.CustomGuildAchievementsDB.adminCommands > 100 then
+        table_remove(addon.CustomGuildAchievementsDB.adminCommands, 1)
     end
     
     SendResponseToAdmin(sender, "|cff00ff00[Custom Guild Achievements]|r Achievement '" .. payload.achievementId .. "' deleted successfully")
@@ -369,22 +369,22 @@ local function ProcessClearSecretKeyCommand(payload, sender)
     
     -- Check if key exists before clearing (for idempotency)
     local hadKey = false
-    if addon.HardcoreAchievementsDB and addon.HardcoreAchievementsDB.adminSecretKey and addon.HardcoreAchievementsDB.adminSecretKey ~= "" then
+    if addon.CustomGuildAchievementsDB and addon.CustomGuildAchievementsDB.adminSecretKey and addon.CustomGuildAchievementsDB.adminSecretKey ~= "" then
         hadKey = true
     end
     
     -- Clear the secret key
-    if addon.HardcoreAchievementsDB then
-        addon.HardcoreAchievementsDB.adminSecretKey = nil
+    if addon.CustomGuildAchievementsDB then
+        addon.CustomGuildAchievementsDB.adminSecretKey = nil
         
         -- Also clear admin nonces to prevent any issues
-        if addon.HardcoreAchievementsDB.adminNonces then
-            addon.HardcoreAchievementsDB.adminNonces = {}
+        if addon.CustomGuildAchievementsDB.adminNonces then
+            addon.CustomGuildAchievementsDB.adminNonces = {}
         end
         
         -- Log the action
-        if not addon.HardcoreAchievementsDB.adminCommands then addon.HardcoreAchievementsDB.adminCommands = {} end
-        table_insert(addon.HardcoreAchievementsDB.adminCommands, {
+        if not addon.CustomGuildAchievementsDB.adminCommands then addon.CustomGuildAchievementsDB.adminCommands = {} end
+        table_insert(addon.CustomGuildAchievementsDB.adminCommands, {
             timestamp = time(),
             commandType = "clear_secret_key",
             sender = sender,
@@ -394,8 +394,8 @@ local function ProcessClearSecretKeyCommand(payload, sender)
         })
         
         -- Keep only last 100 commands
-        if #addon.HardcoreAchievementsDB.adminCommands > 100 then
-            table_remove(addon.HardcoreAchievementsDB.adminCommands, 1)
+        if #addon.CustomGuildAchievementsDB.adminCommands > 100 then
+            table_remove(addon.CustomGuildAchievementsDB.adminCommands, 1)
         end
         
         if hadKey then
@@ -560,7 +560,7 @@ local function ProcessAdminCommand(payload, sender)
 	end
 
 	-- If solo flag is set, we need to set up progress data before completion
-	-- This ensures HCA_MarkRowCompleted recognizes it as solo and doubles points if applicable
+	-- This ensures MarkRowCompleted recognizes it as solo and doubles points if applicable
 	if payload.solo then
 		local _, cdb = addon.GetCharDB()
 		if cdb then
@@ -568,7 +568,7 @@ local function ProcessAdminCommand(payload, sender)
 			local id = achievementRow.id
 			local progress = cdb.progress[id] or {}
 			
-			-- Set solo status in progress (this is what HCA_MarkRowCompleted checks)
+			-- Set solo status in progress (this is what MarkRowCompleted checks)
 			progress.soloKill = true
 			progress.soloQuest = true
 			
@@ -649,9 +649,9 @@ local function ProcessAdminCommand(payload, sender)
 	SendResponseToAdmin(sender, "|cff00ff00[Custom Guild Achievements]|r Achievement '" .. payload.achievementId .. "' completed via admin command")
     
     -- Log the admin command (for audit trail)
-    if not addon.HardcoreAchievementsDB.adminCommands then addon.HardcoreAchievementsDB.adminCommands = {} end
+    if not addon.CustomGuildAchievementsDB.adminCommands then addon.CustomGuildAchievementsDB.adminCommands = {} end
     
-    table_insert(addon.HardcoreAchievementsDB.adminCommands, {
+    table_insert(addon.CustomGuildAchievementsDB.adminCommands, {
         timestamp = time(),
         achievementId = payload.achievementId,
         sender = sender,
@@ -662,8 +662,8 @@ local function ProcessAdminCommand(payload, sender)
     })
     
     -- Keep only last 100 commands to prevent database bloat
-    if #addon.HardcoreAchievementsDB.adminCommands > 100 then
-        table_remove(addon.HardcoreAchievementsDB.adminCommands, 1)
+    if #addon.CustomGuildAchievementsDB.adminCommands > 100 then
+        table_remove(addon.CustomGuildAchievementsDB.adminCommands, 1)
     end
     
     return true
@@ -802,8 +802,8 @@ local function HandleSlashCommand(msg)
                 print("|CFFFFD100[Custom Guild Achievements]|r Key must be at least 16 characters long")
             end
         elseif args[2] == "clear" then
-            if addon.HardcoreAchievementsDB then
-                addon.HardcoreAchievementsDB.adminSecretKey = nil
+            if addon.CustomGuildAchievementsDB then
+                addon.CustomGuildAchievementsDB.adminSecretKey = nil
                 print("|cff00ff00[Custom Guild Achievements]|r Admin secret key cleared")
                 if addon and addon.UpdateKeyStatus then
                     UpdateKeyStatus()

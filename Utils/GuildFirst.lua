@@ -225,7 +225,7 @@ local function Hash32(s)
 end
 
 local function PrefixForKey(key)
-    return "HCA" .. string_format("%08X", Hash32(key))
+    return "CGA" .. string_format("%08X", Hash32(key))
 end
 
 --- Determine the scope key for an achievement based on its definition.
@@ -526,7 +526,7 @@ local function EnsureDBForScope(scopeKey)
     end
 
     -- Load persisted state
-    local root = addon and addon.HardcoreAchievementsDB
+    local root = addon and addon.CustomGuildAchievementsDB
     if root and root.guildFirst and root.guildFirst[scopeKey] and root.guildFirst[scopeKey].state then
         pcall(function()
             LibP2PDB:ImportDatabase(db, root.guildFirst[scopeKey].state)
@@ -698,7 +698,7 @@ local function CanClaimAndAward(self, achievementId, row, winnersPeerIDs)
 
         -- Save to SavedVariables so state is current when WoW persists on logout/exit
         if databases[scopeKey] then
-            local root = (addon and addon.HardcoreAchievementsDB) or {}
+            local root = (addon and addon.CustomGuildAchievementsDB) or {}
             root.guildFirst = root.guildFirst or {}
             local dbState = LibP2PDB:ExportDatabase(db)
             if dbState then
@@ -767,7 +767,7 @@ initFrame:RegisterEvent("PLAYER_LEAVING_WORLD")
 initFrame:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_LEAVING_WORLD" then
         -- Export all guild-first DBs so SavedVariables persist current state on logout/exit
-        local root = (addon and addon.HardcoreAchievementsDB) or {}
+        local root = (addon and addon.CustomGuildAchievementsDB) or {}
         root.guildFirst = root.guildFirst or {}
         for scopeKey, info in pairs(databases) do
             if info.db then

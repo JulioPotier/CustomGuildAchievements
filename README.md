@@ -33,7 +33,7 @@ Options panel: `Utils/OptionsPanel.lua`.
 
 ### Backup / Restore
 
-The “Backup and Restore Database” button exports an encoded string (compress + encode) containing the whole `HardcoreAchievementsDB` SavedVariables.  
+The “Backup and Restore Database” button exports an encoded string (compress + encode) containing the whole `CustomGuildAchievementsDB` SavedVariables.  
 The Restore panel replaces the database and then calls `ReloadUI()`.
 
 ### Tracker
@@ -118,6 +118,26 @@ Definitions can rely on “function trackers” attached to the row:
   - optionnel: `checkInteractDistance = true` pour exiger la proximité
 - **Chat emote**: `row.chatTracker(msg)` evaluated on `CHAT_MSG_TEXT_EMOTE`
 
+### 6.1) Drop an item on an NPC (“dropItemOn”)
+
+This trigger detects the *intent* of “giving” an item to an NPC (WoW has no real NPC trade window):
+
+- the player **picks up** an item from their **bags** (hooked via `PickupContainerItem`),
+- the item is still on the **cursor** (`GetCursorInfo()`),
+- the player is **targeting** the specified NPC,
+- and the player is within **trade distance** (`CheckInteractDistance("target", 2)`).
+
+Definition field (required keys):
+
+```lua
+dropItemOn = { itemId = 4540, nbItem = 1, npcId = 6174 }
+```
+
+Behavior:
+
+- when it matches, the addon **cancels the cursor pickup** (`ClearCursor()`) so the item is not lost,
+- then completes the achievement using the normal completion flow (toast animation included).
+
 ### 7) Exploration / zone discovery
 
 `Functions/CheckMapDiscovery.lua` exposes:
@@ -170,9 +190,7 @@ Definition field:
 ```lua
 startNpc = {
   npcId = 466,
-  mapId = 1453,
-  x = 0.64, y = 0.75,     -- normalized coordinates 0..1
-  mapPin = true,          -- WorldMap pin + minimap direction
+  coords = { mapId = 1453, x = 0.64, y = 0.75 }, -- normalized coordinates 0..1 (coords => map pin)
   raidMark = true,        -- optional: force “diamond” raid marker
   window = {              -- optional: interactive window
     title = "Title",
@@ -186,7 +204,7 @@ startNpc = {
 
 Behavior:
 
-- if `mapPin=true`, the engine displays a “diamond” pin on the map plus a minimap direction marker.
+- if `coords` is present, the engine displays a “diamond” pin on the map plus a minimap direction marker.
 - the engine can also mark the nearest eligible NPC via nameplates (raid target diamond) if opted-in.
 - if `window` is present, the addon can open a start window on interaction / targeting (based on internal rules + distance).
 
@@ -279,14 +297,14 @@ The `ctx` table contains (best effort):
 
 How it works (see `Utils/CommandHandler.lua`):
 
-- When a player completes “Precious”, the addon sends an AceComm message on `SAY` (`HCA_Fellowship`).
+- When a player completes “Precious”, the addon sends an AceComm message on `SAY` (`CGA_Fellowship`).
 - Other clients can subscribe via `addon.RegisterPreciousCompletionCallback(cb)` to react (e.g., complete a nearby “Fellowship” achievement).
 
 ## Admin (secure commands)
 
 `Utils/CommandHandler.lua` implements an AceComm channel for admin commands with authentication:
 
-- Prefixes: `HCA_Admin_Cmd` (command), `HCA_Admin_Resp` (response)
+- Prefixes: `CGA_Admin_Cmd` (command), `CGA_Admin_Resp` (response)
 - Protection: timestamp (max 5 min) + anti-replay nonce + hash based on a **local secret key**.
 
 Player-side command:

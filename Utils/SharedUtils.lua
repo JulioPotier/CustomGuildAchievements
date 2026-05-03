@@ -417,6 +417,8 @@ local function RegisterAchievementDef(def, overrides)
         requiredTalkTo = def.requiredTalkTo,
         -- Optional display order for requiredTarget lists (tracker/tooltip); never used for completion logic.
         targetOrder = def.targetOrder,
+        -- dropItemOn: { itemId, nbItem, npcId } (array style). Intercept bag pickup + target NPC to complete.
+        dropItemOn = def.dropItemOn,
         requiredQuestId = def.requiredQuestId,
         -- Dungeon/Raid-specific fields
         mapID = def.requiredMapId or def.mapID,
@@ -436,6 +438,8 @@ local function RegisterAchievementDef(def, overrides)
         faction = def.faction,
         race = def.race,
         class = def.class,
+        -- Eligibility gate: if true, hide+block for non self-found characters (custom field).
+        selfFoundOnly = def.selfFoundOnly,
         zone = def.zone,
         zoneAccurate = def.zoneAccurate,
         explorationZone = def.explorationZone,
@@ -473,6 +477,218 @@ local function RegisterAchievementDef(def, overrides)
     addon.AchievementDefs[tostring(def.achId)] = achDef
 end
 
+-- =========================================================
+-- dropItemOn trigger (bag pickup + target NPC)
+-- =========================================================
+
+local function getSimpleNpcIdFromUnit(unit)
+    if not unit or not UnitExists(unit) or UnitIsPlayer(unit) then return nil end
+    local guid = UnitGUID(unit)
+    if not guid then return nil end
+    local unitType, _, _, _, _, id = strsplit("-", guid)
+    if unitType == "Creature" or unitType == "Vehicle" or unitType == "Pet" then
+        return tonumber(id)
+    end
+    return nil
+end
+
+local function getContainerItemLinkCompat(bag, slot)
+    if C_Container and C_Container.GetContainerItemLink then
+        return C_Container.GetContainerItemLink(bag, slot)
+    end
+    if GetContainerItemLink then
+        return GetContainerItemLink(bag, slot)
+    end
+    return nil
+end
+
+local function getContainerItemInfoCompat(bag, slot)
+    if C_Container and C_Container.GetContainerItemInfo then
+        return C_Container.GetContainerItemInfo(bag, slot)
+    end
+    if GetContainerItemInfo then
+        local texture, itemCount, locked, quality, readable, lootable, itemLink, isFiltered, noValue, itemID = GetContainerItemInfo(bag, slot)
+        return {
+            iconFileID = texture,
+            stackCount = itemCount,
+            isLocked = locked,
+            quality = quality,
+            itemLink = itemLink,
+            itemID = itemID,
+        }
+    end
+    return nil
+end
+
+local function EnsureDropItemOnState()
+    if not addon then return nil end
+    addon._cgaDropItemOn = addon._cgaDropItemOn or {
+        hooked = false,
+        last = { t = 0, fromBag = false, itemId = nil, count = nil, link = nil },
+        defs = nil, -- map achId -> cfg { itemId, nbItem, npcId }
+    }
+    return addon._cgaDropItemOn
+end
+
+local function BuildDropItemOnDefs()
+    if not addon then return nil end
+    local defs = addon.AchievementDefs or {}
+    local result = {}
+    for achId, def in pairs(defs) do
+        local d = def
+        local cfg = d and d.dropItemOn
+        if type(cfg) == "table" then
+            -- Required named keys for readability:
+            -- dropItemOn = { itemId = 4540, nbItem = 1, npcId = 6174 }
+            local itemId = tonumber(cfg.itemId)
+            local nbItem = tonumber(cfg.nbItem) or 1
+            local npcId = tonumber(cfg.npcId)
+            if itemId and npcId then
+                result[tostring(achId)] = { itemId = itemId, nbItem = nbItem, npcId = npcId }
+            end
+        end
+    end
+    return result
+end
+
+local function CompleteAchievementById(achId)
+    if not addon or not achId then return false end
+    local id = tostring(achId)
+
+    -- Respect chain lock: only complete if unlocked (when the engine exposes the helper)
+    local def = addon.AchievementDefs and addon.AchievementDefs[id]
+    if def and def.unlockedBy and addon.IsUnlockedBy and type(addon.IsUnlockedBy) == "function" then
+        if not addon.IsUnlockedBy(def) then
+            return false
+        end
+    end
+
+    local row = addon.GetAchievementRow and addon.GetAchievementRow(id)
+    if row then
+        -- Prefer toast path when available so completion looks consistent across triggers.
+        if addon.MarkRowCompletedWithToast and type(addon.MarkRowCompletedWithToast) == "function" then
+            return addon.MarkRowCompletedWithToast(row) == true
+        end
+        if addon.MarkRowCompleted and type(addon.MarkRowCompleted) == "function" then
+            return addon.MarkRowCompleted(row) == true
+        end
+    end
+
+    -- If the UI row isn't built yet, persist directly.
+    if addon.GetCharDB and type(addon.GetCharDB) == "function" then
+        local _, cdb = addon.GetCharDB()
+        if cdb then
+            cdb.achievements = cdb.achievements or {}
+            cdb.achievements[id] = cdb.achievements[id] or {}
+            local rec = cdb.achievements[id]
+            if rec.completed == true then
+                return false
+            end
+            rec.completed = true
+            rec.completedAt = rec.completedAt or (time and time() or 0)
+            rec.level = rec.level or (UnitLevel("player") or nil)
+            if addon.UpdateTotalPoints then addon.UpdateTotalPoints() end
+            if addon.RestoreCompletionsFromDB then addon.RestoreCompletionsFromDB() end
+            return true
+        end
+    end
+    return false
+end
+
+local function TryMatchDropItemOn()
+    if not addon or addon.Disabled then return end
+    local st = EnsureDropItemOnState()
+    if not st then return end
+    st.defs = st.defs or BuildDropItemOnDefs()
+    if not st.defs or not next(st.defs) then return end
+
+    -- Must be holding an item on the cursor that originated from a bag pickup.
+    local last = st.last
+    if not last or last.fromBag ~= true or not last.itemId then return end
+    if type(GetCursorInfo) == "function" then
+        local ctype, cid = GetCursorInfo()
+        if ctype ~= "item" or tonumber(cid) ~= tonumber(last.itemId) then
+            return
+        end
+    else
+        return
+    end
+
+    local npcId = getSimpleNpcIdFromUnit("target")
+    if not npcId then return end
+    -- Global rule for dropItemOn: require trade-distance proximity to the targeted NPC.
+    -- (The client doesn't support NPC trade windows; this is our generic "close enough" gate.)
+    if type(CheckInteractDistance) == "function" then
+        -- 2 = trade distance (also used elsewhere for "close enough" gates)
+        if not CheckInteractDistance("target", 2) then
+            return
+        end
+    end
+
+    for achId, cfg in pairs(st.defs) do
+        if cfg and cfg.itemId == last.itemId and cfg.npcId == npcId then
+            local need = tonumber(cfg.nbItem) or 1
+            local have = tonumber(last.count) or 1
+            if have >= need then
+                -- Cancel the drag (puts it back) and complete the achievement.
+                if ClearCursor then
+                    ClearCursor()
+                end
+                CompleteAchievementById(achId)
+                return
+            end
+        end
+    end
+end
+
+local function SetupDropItemOnTrigger()
+    if not addon then return end
+    local st = EnsureDropItemOnState()
+    if not st or st.hooked then return end
+    st.hooked = true
+    st.defs = BuildDropItemOnDefs()
+
+    local function onPickupContainerItem(a, b, c)
+        local bag, slot
+        if type(a) == "table" then
+            bag, slot = b, c -- hooksecurefunc(C_Container, "PickupContainerItem", ...)
+        else
+            bag, slot = a, b -- hooksecurefunc("PickupContainerItem", ...)
+        end
+
+        local link = getContainerItemLinkCompat(bag, slot)
+        local info = getContainerItemInfoCompat(bag, slot)
+
+        st.last.t = (GetTime and GetTime()) or 0
+        st.last.fromBag = true
+        st.last.link = link
+        st.last.count = (info and info.stackCount) or nil
+        local itemID = (info and info.itemID) or nil
+        if not itemID and link and GetItemInfoInstant then
+            itemID = select(1, GetItemInfoInstant(link))
+        end
+        st.last.itemId = itemID
+
+        -- If the player is already targeting the NPC, complete immediately.
+        TryMatchDropItemOn()
+    end
+
+    if PickupContainerItem then
+        hooksecurefunc("PickupContainerItem", onPickupContainerItem)
+    elseif C_Container and C_Container.PickupContainerItem then
+        hooksecurefunc(C_Container, "PickupContainerItem", onPickupContainerItem)
+    end
+
+    local f = CreateFrame("Frame")
+    f:RegisterEvent("PLAYER_TARGET_CHANGED")
+    f:RegisterEvent("PLAYER_LOGIN")
+    f:SetScript("OnEvent", function()
+        -- Refresh defs (catalog may have registered after we were hooked).
+        st.defs = BuildDropItemOnDefs()
+        TryMatchDropItemOn()
+    end)
+end
+
 ---------------------------------------
 -- Export: internal (addon)
 ---------------------------------------
@@ -504,5 +720,6 @@ if addon then
     addon.CountSatisfiedRequiredTargets = CountSatisfiedRequiredTargets
     addon.CountRequiredTargetEntries = CountRequiredTargetEntries
     addon.SetupRequiredTargetAutoTrack = SetupRequiredTargetAutoTrack
+    addon.SetupDropItemOnTrigger = SetupDropItemOnTrigger
     addon.IsSelfFound = IsSelfFound
 end

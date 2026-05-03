@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CustomGuildAchievements — Wizard Achievement</title>
+    <style>
+      :root{
+        --bg:#0b0608;
+        --card:#1b0b0f;
+        --card2:#12070a;
+        --text:#fff2e5;
+        --muted:#e6cbb6;
+        --accent:#ff3b3b;   /* principal (rouge) */
+        --accent2:#ffcc2f;  /* secondaire (jaune) */
+        --warn:#ffcc66;
+        --danger:#ff5f73;
+        --line:rgba(255,255,255,.12);
+        --mono:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        --sans:ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+      }
+      html,body{height:100%}
+      body{margin:0;background:
+        radial-gradient(1200px 700px at 22% -12%, rgba(255,59,59,.35), transparent 58%),
+        radial-gradient(980px 620px at 82% -6%, rgba(255,204,47,.20), transparent 58%),
+        radial-gradient(900px 700px at 60% 110%, rgba(255,59,59,.18), transparent 60%),
+        var(--bg);
+        color:var(--text);font-family:var(--sans);}
+      .wrap{max-width:1080px;margin:0 auto;padding:24px}
+      .top{display:flex;gap:16px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}
+      h1{font-size:20px;margin:0 0 4px 0}
+      .sub{margin:0;color:var(--muted);font-size:13px;line-height:1.4}
+      .pill{display:inline-flex;gap:8px;align-items:center;padding:8px 10px;border:1px solid var(--line);border-radius:999px;background:rgba(27,11,15,.65);color:var(--muted);font-size:12px}
+      .grid{display:grid;grid-template-columns:1fr;gap:14px;margin-top:14px}
+      @media (min-width: 980px){.grid{grid-template-columns: 1.1fr .9fr}}
+      .card{
+        border:1px solid var(--line);
+        border-radius:16px;
+        background:linear-gradient(180deg, rgba(27,11,15,.88), rgba(18,7,10,.78));
+        box-shadow:0 10px 40px rgba(0,0,0,.42)
+      }
+      .card .hd{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:12px}
+      .card .bd{padding:16px}
+      .steps{display:flex;gap:8px;flex-wrap:wrap}
+      .stepDot{border:1px solid var(--line);border-radius:999px;padding:6px 10px;color:var(--muted);font-size:12px;user-select:none}
+      .stepDot.active{border-color:rgba(255,77,77,.55);color:var(--text);background:rgba(255,77,77,.10)}
+      .row{display:grid;grid-template-columns:1fr;gap:10px}
+      @media (min-width: 720px){.row.cols2{grid-template-columns:1fr 1fr}}
+      @media (min-width: 720px){.row.cols3{grid-template-columns:1fr 1fr 1fr}}
+      label{display:block;font-size:12px;color:var(--muted);margin:0 0 6px}
+      input,select,textarea{width:100%;box-sizing:border-box;border:1px solid var(--line);background:rgba(13,6,8,.60);
+        color:var(--text);border-radius:10px;padding:10px 10px;outline:none}
+      textarea{min-height:96px;resize:vertical;font-family:var(--mono);font-size:12px;line-height:1.45}
+      input::placeholder,textarea::placeholder{color:rgba(170,180,230,.55)}
+      .hint{margin-top:6px;color:rgba(230,203,182,.88);font-size:12px;line-height:1.35}
+      .inline{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+      .inline .chk{display:flex;gap:8px;align-items:center}
+      .inline input[type="checkbox"]{width:auto}
+      .btns{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;margin-top:14px}
+      button{border:1px solid var(--line);background:rgba(17,26,51,.6);color:var(--text);border-radius:12px;
+        padding:10px 12px;cursor:pointer}
+      button{background:rgba(27,11,15,.62)}
+      button.primary{border-color:rgba(255,59,59,.68);background:rgba(255,59,59,.16)}
+      button.good{border-color:rgba(255,204,47,.70);background:rgba(255,204,47,.12)}
+      button.danger{border-color:rgba(255,95,115,.55);background:rgba(255,95,115,.10);color:#ffdfe3}
+      button:disabled{opacity:.45;cursor:not-allowed}
+      .code{font-family:var(--mono);font-size:12px;line-height:1.5;white-space:pre;border:1px solid var(--line);
+        border-radius:14px;background:rgba(13,6,8,.66);padding:12px;overflow:auto;max-height:560px}
+      .badge{display:inline-block;font-size:11px;border:1px solid var(--line);border-radius:8px;padding:5px 8px;color:var(--muted);background:rgba(13,6,8,.40)}
+      .warn{color:var(--warn)}
+      .dangerText{color:#ffb0bb}
+      .ok{color:#bfffe0}
+      .small{font-size:12px;color:var(--muted)}
+      .k{font-family:var(--mono);font-size:12px;color:rgba(231,236,255,.9)}
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="top">
+        <div>
+          <h1 data-i18n="appTitle">Wizard d’achievement (CustomGuildAchievements)</h1>
+          <p class="sub" data-i18n="appSubtitle">
+            Remplissez les infos étape par étape, puis copiez/collez le snippet Lua dans
+            <span class="k">Achievements/CustomCatalog.lua</span> (dans la table <span class="k">CustomAchievements</span>).
+          </p>
+        </div>
+        <div class="inline" style="justify-content:flex-end">
+          <button type="button" class="primary" id="btnLang" data-i18n-title="langToggleTitle" title="Toggle FR/EN">FR</button>
+          <div class="pill">
+            <span class="badge" data-i18n="outputBadge">Sortie</span>
+            <span data-i18n="outputText">1 bloc Lua “def” prêt à coller</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="card" id="cardForm">
+          <div class="hd">
+            <div class="steps" id="steps"></div>
+            <div class="badge" id="stepTitle">—</div>
+          </div>
+          <div class="bd">
+            <div id="stepHost"></div>
+            <div class="btns">
+              <button type="button" id="btnBack" data-i18n="backBtn">Retour</button>
+              <button type="button" class="primary" id="btnNext" data-i18n="nextBtn">Suivant</button>
+              <button type="button" class="good" id="btnGenerate" data-i18n="generateBtn" hidden>Générer</button>
+            </div>
+            <div class="hint" style="margin-top:10px">
+              <a href="https://github.com/JulioPotier/CustomGuildAchievements/blob/main/README.md" target="_blank" rel="noreferrer">Documentation</a> — Kirby2112
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="hd">
+            <div>
+              <div class="badge" data-i18n="snippetBadge">Snippet Lua</div>
+              <div class="small" data-i18n="snippetSubtitle">Collez dans <span class="k">Achievements/CustomCatalog.lua</span></div>
+            </div>
+            <div class="inline">
+              <button type="button" class="good" id="btnCopy" disabled data-i18n="copyBtn">Copier</button>
+              <button type="button" class="danger" id="btnReset" data-i18n="resetBtn">Reset</button>
+            </div>
+          </div>
+          <div class="bd">
+            <div class="code" id="out" data-i18n="outEmpty">(Remplissez le formulaire puis cliquez “Générer”.)</div>
+            <div class="hint" id="outHint"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="application/json" id="zonesClassic1132">
+[
+  { "id": 1411, "name": "Durotar" },
+  { "id": 1412, "name": "Mulgore" },
+  { "id": 1413, "name": "The Barrens" },
+  { "id": 1416, "name": "Alterac Mountains" },
+  { "id": 1417, "name": "Arathi Highlands" },
+  { "id": 1418, "name": "Badlands" },
+  { "id": 1419, "name": "Blasted Lands" },
+  { "id": 1420, "name": "Tirisfal Glades" },
+  { "id": 1421, "name": "Silverpine Forest" },
+  { "id": 1422, "name": "Western Plaguelands" },
+  { "id": 1423, "name": "Eastern Plaguelands" },
+  { "id": 1424, "name": "Hillsbrad Foothills" },
+  { "id": 1425, "name": "The Hinterlands" },
+  { "id": 1426, "name": "Dun Morogh" },
+  { "id": 1427, "name": "Searing Gorge" },
+  { "id": 1428, "name": "Burning Steppes" },
+  { "id": 1429, "name": "Elwynn Forest" },
+  { "id": 1430, "name": "Deadwind Pass" },
+  { "id": 1431, "name": "Duskwood" },
+  { "id": 1432, "name": "Loch Modan" },
+  { "id": 1433, "name": "Redridge Mountains" },
+  { "id": 1434, "name": "Stranglethorn Vale" },
+  { "id": 1435, "name": "Swamp of Sorrows" },
+  { "id": 1436, "name": "Westfall" },
+  { "id": 1437, "name": "Wetlands" },
+  { "id": 1438, "name": "Teldrassil" },
+  { "id": 1439, "name": "Darkshore" },
+  { "id": 1440, "name": "Ashenvale" },
+  { "id": 1441, "name": "Thousand Needles" },
+  { "id": 1442, "name": "Stonetalon Mountains" },
+  { "id": 1443, "name": "Desolace" },
+  { "id": 1444, "name": "Feralas" },
+  { "id": 1445, "name": "Dustwallow Marsh" },
+  { "id": 1446, "name": "Tanaris" },
+  { "id": 1447, "name": "Azshara" },
+  { "id": 1448, "name": "Felwood" },
+  { "id": 1449, "name": "Un'Goro Crater" },
+  { "id": 1450, "name": "Moonglade" },
+  { "id": 1451, "name": "Silithus" },
+  { "id": 1452, "name": "Winterspring" },
+  { "id": 1453, "name": "Stormwind City" },
+  { "id": 1454, "name": "Orgrimmar" },
+  { "id": 1455, "name": "Ironforge" },
+  { "id": 1456, "name": "Thunder Bluff" },
+  { "id": 1457, "name": "Darnassus" },
+  { "id": 1458, "name": "Undercity" },
+  { "id": 1459, "name": "Alterac Valley" },
+  { "id": 1460, "name": "Warsong Gulch" },
+  { "id": 1461, "name": "Arathi Basin" }
+]
+    </script>
+
+    <script src="./AchievementWizard.js"></script>
+  </body>
+</html>

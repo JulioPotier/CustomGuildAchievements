@@ -1,7 +1,7 @@
 -- Utils/AchievementLinks.lua
 -- Custom chat hyperlink support for HardcoreAchievements
 
-local HCA_LINK_PREFIX = "hcaach"
+local CGA_LINK_PREFIX = "cgaach"
 
 local addonName, addon = ...
 local GetAchievementDisplayValues = (addon and addon.GetAchievementDisplayValues)
@@ -92,7 +92,7 @@ end
 local function GetAchievementBracket(achId)
 	-- For some achievements, the title is player-specific (e.g., includes the sender's name).
 	-- In those cases, send an expanded bracket form so receivers don't recompute a different title locally.
-	-- Pattern handled by ChatFilter_HCA below: [CGA: Title (achId)]
+	-- Pattern handled by ChatFilter_CGA below: [CGA: Title (achId)]
 	local rec = GetAchievementById(achId)
 	if rec and rec.linkUsesSenderTitle and rec.title then
 		return string_format("[CGA: %s (%s)]", tostring(rec.title), tostring(achId))
@@ -111,9 +111,9 @@ local function GetAchievementHyperlink(achId, title, senderName, senderGuid)
 	end
 	local name = senderName or ""
 	local display = string_format("[%s]", tostring(title or achId))
-	-- Format (v2): |Hhcaach:achId:senderGuid:senderName|h[Title]|h
-	-- Backwards compatible with v1: hcaach:achId:senderGuid
-	return "|cffffd100" .. string_format("|H%s:%s:%s:%s|h%s|h", HCA_LINK_PREFIX, tostring(achId), tostring(guid), tostring(name), display) .. "|r"
+	-- Format (v2): |Hcgaach:achId:senderGuid:senderName|h[Title]|h
+	-- Backwards compatible with v1: cgaach:achId:senderGuid
+	return "|cffffd100" .. string_format("|H%s:%s:%s:%s|h%s|h", CGA_LINK_PREFIX, tostring(achId), tostring(guid), tostring(name), display) .. "|r"
 end
 
 -- Tooltip rendering for our custom link
@@ -127,8 +127,8 @@ if Old_ItemRef_SetHyperlink then
         -- Extract hyperlink part (between |H and |h); link may start with |cAARRGGBB color code
         local hyperlinkPart = string.match(linkStr, "%|H([^|]+)%|h") or linkStr
         -- Parse link format:
-		-- v1: hcaach:achId:senderGuid
-		-- v2: hcaach:achId:senderGuid:senderName
+		-- v1: cgaach:achId:senderGuid
+		-- v2: cgaach:achId:senderGuid:senderName
         -- Icon, points, and other data are always looked up locally, never from the link
 		local prefix, achId, rest = string.match(hyperlinkPart, "^(%w+):([^:]+):?(.*)$")
 		local senderGuid, senderName = "", ""
@@ -138,7 +138,7 @@ if Old_ItemRef_SetHyperlink then
 			senderGuid = senderGuid or ""
 			senderName = senderName or ""
 		end
-        if prefix == HCA_LINK_PREFIX and achId then
+        if prefix == CGA_LINK_PREFIX and achId then
             ShowUIPanel(ItemRefTooltip)
 			ItemRefTooltip:SetOwner(UIParent, "ANCHOR_PRESERVE")
 			ItemRefTooltip:ClearLines()
@@ -167,7 +167,7 @@ if Old_ItemRef_SetHyperlink then
 			if rec and rec.linkUsesSenderTitle and displayTitleFromLink and displayTitleFromLink ~= "" then
 				title = displayTitleFromLink
 			end
-			-- If we don't have the visible title text (some hyperlink call sites pass only "hcaach:..."),
+			-- If we don't have the visible title text (some hyperlink call sites pass only "cgaach:..."),
 			-- allow an achievement to compute a sender-stable title from sender identity.
 			-- Define `def.linkTitle = function(senderName, senderGuid, displayTitleFromLink) return "..." end`.
 			if rec and rec.linkUsesSenderTitle and (not displayTitleFromLink or displayTitleFromLink == "") and type(rec.linkTitle) == "function" then
@@ -480,7 +480,7 @@ if Old_ItemRef_SetHyperlink then
 	end
 end
 
-local function ChatFilter_HCA(chatFrame, event, msg, author, ...)
+local function ChatFilter_CGA(chatFrame, event, msg, author, ...)
     if not msg or type(msg) ~= "string" then return end
     local changed = false
 	-- ChatFrame_AddMessageEventFilter passes (self, event, msg, author, ...)
@@ -556,19 +556,19 @@ end
 
 -- Register filters for common channels
 if ChatFrame_AddMessageEventFilter then
-	ChatFrame_AddMessageEventFilter("CHAT_MSG_SAY", ChatFilter_HCA)
-	ChatFrame_AddMessageEventFilter("CHAT_MSG_YELL", ChatFilter_HCA)
-	ChatFrame_AddMessageEventFilter("CHAT_MSG_WHISPER", ChatFilter_HCA)
-	ChatFrame_AddMessageEventFilter("CHAT_MSG_WHISPER_INFORM", ChatFilter_HCA)
-	ChatFrame_AddMessageEventFilter("CHAT_MSG_GUILD", ChatFilter_HCA)
-	ChatFrame_AddMessageEventFilter("CHAT_MSG_OFFICER", ChatFilter_HCA)
-	ChatFrame_AddMessageEventFilter("CHAT_MSG_PARTY", ChatFilter_HCA)
-	ChatFrame_AddMessageEventFilter("CHAT_MSG_PARTY_LEADER", ChatFilter_HCA)
-	ChatFrame_AddMessageEventFilter("CHAT_MSG_RAID", ChatFilter_HCA)
-	ChatFrame_AddMessageEventFilter("CHAT_MSG_RAID_LEADER", ChatFilter_HCA)
-	ChatFrame_AddMessageEventFilter("CHAT_MSG_INSTANCE_CHAT", ChatFilter_HCA)
-	ChatFrame_AddMessageEventFilter("CHAT_MSG_INSTANCE_CHAT_LEADER", ChatFilter_HCA)
-	ChatFrame_AddMessageEventFilter("CHAT_MSG_CHANNEL", ChatFilter_HCA)
+	ChatFrame_AddMessageEventFilter("CHAT_MSG_SAY", ChatFilter_CGA)
+	ChatFrame_AddMessageEventFilter("CHAT_MSG_YELL", ChatFilter_CGA)
+	ChatFrame_AddMessageEventFilter("CHAT_MSG_WHISPER", ChatFilter_CGA)
+	ChatFrame_AddMessageEventFilter("CHAT_MSG_WHISPER_INFORM", ChatFilter_CGA)
+	ChatFrame_AddMessageEventFilter("CHAT_MSG_GUILD", ChatFilter_CGA)
+	ChatFrame_AddMessageEventFilter("CHAT_MSG_OFFICER", ChatFilter_CGA)
+	ChatFrame_AddMessageEventFilter("CHAT_MSG_PARTY", ChatFilter_CGA)
+	ChatFrame_AddMessageEventFilter("CHAT_MSG_PARTY_LEADER", ChatFilter_CGA)
+	ChatFrame_AddMessageEventFilter("CHAT_MSG_RAID", ChatFilter_CGA)
+	ChatFrame_AddMessageEventFilter("CHAT_MSG_RAID_LEADER", ChatFilter_CGA)
+	ChatFrame_AddMessageEventFilter("CHAT_MSG_INSTANCE_CHAT", ChatFilter_CGA)
+	ChatFrame_AddMessageEventFilter("CHAT_MSG_INSTANCE_CHAT_LEADER", ChatFilter_CGA)
+	ChatFrame_AddMessageEventFilter("CHAT_MSG_CHANNEL", ChatFilter_CGA)
 end
 
 if addon then

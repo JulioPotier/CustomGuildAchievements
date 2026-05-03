@@ -56,9 +56,9 @@ local lastInstanceMapId = nil
 
 -- Persist dungeon entry state to SavedVariables so it survives /reload (e.g. enter at 14, level to 15, reload -> still eligible)
 local function SaveDungeonEntryState()
-    if not (addon and addon.HardcoreAchievementsDB) then return end
-    addon.HardcoreAchievementsDB.dungeonEntryLevels = addon.HardcoreAchievementsDB.dungeonEntryLevels or {}
-    local sv = addon.HardcoreAchievementsDB.dungeonEntryLevels
+    if not (addon and addon.CustomGuildAchievementsDB) then return end
+    addon.CustomGuildAchievementsDB.dungeonEntryLevels = addon.CustomGuildAchievementsDB.dungeonEntryLevels or {}
+    local sv = addon.CustomGuildAchievementsDB.dungeonEntryLevels
     for mapId, entry in pairs(instanceEntryLevels) do
         if entry and (entry.playerLevel or entry.partyLevels) then
             sv[tostring(mapId)] = {
@@ -79,14 +79,14 @@ local function SaveDungeonEntryState()
             sv[mapIdStr] = nil
         end
     end
-    addon.HardcoreAchievementsDB.dungeonLastInstanceMapId = lastInstanceMapId and tostring(lastInstanceMapId) or nil
+    addon.CustomGuildAchievementsDB.dungeonLastInstanceMapId = lastInstanceMapId and tostring(lastInstanceMapId) or nil
 end
 
 -- Restore from SavedVariables when re-entering world (e.g. after /reload) so we keep entry-level eligibility
 local function RestoreDungeonEntryState(mapId)
-    if not mapId or not (addon and addon.HardcoreAchievementsDB and addon.HardcoreAchievementsDB.dungeonEntryLevels) then return false end
+    if not mapId or not (addon and addon.CustomGuildAchievementsDB and addon.CustomGuildAchievementsDB.dungeonEntryLevels) then return false end
     local key = tostring(mapId)
-    local saved = addon.HardcoreAchievementsDB.dungeonEntryLevels[key]
+    local saved = addon.CustomGuildAchievementsDB.dungeonEntryLevels[key]
     if not saved or not saved.playerLevel then return false end
     instanceEntryLevels[mapId] = {
         playerLevel = saved.playerLevel,

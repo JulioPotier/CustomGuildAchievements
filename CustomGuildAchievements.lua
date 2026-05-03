@@ -256,12 +256,12 @@ end
 
 local function EnsureDB()
     if not addon then return nil end
-    if type(HardcoreAchievementsDB) ~= "table" then
-        HardcoreAchievementsDB = {}
+    if type(CustomGuildAchievementsDB) ~= "table" then
+        CustomGuildAchievementsDB = {}
     end
-    addon.HardcoreAchievementsDB = HardcoreAchievementsDB
-    addon.HardcoreAchievementsDB.chars = addon.HardcoreAchievementsDB.chars or {}
-    return addon.HardcoreAchievementsDB
+    addon.CustomGuildAchievementsDB = CustomGuildAchievementsDB
+    addon.CustomGuildAchievementsDB.chars = addon.CustomGuildAchievementsDB.chars or {}
+    return addon.CustomGuildAchievementsDB
 end
 
 local function GetCharDB()
@@ -765,6 +765,10 @@ local function FormatTimestamp(timestamp)
     end
 end
 
+-- Forward declarations for callbacks (used before definition below).
+local GetAchievementRowForCallback
+local FireAchievementCallback
+
 local function EnsureFailureTimestamp(achId)
     if not achId then return nil end
     local _, cdb = GetCharDB()
@@ -830,7 +834,7 @@ local function GetAchievementDefForCallback(achId, row)
     return nil
 end
 
-local function GetAchievementRowForCallback(achId)
+GetAchievementRowForCallback = function(achId)
     local getRow = addon and addon.GetAchievementRow
     if type(getRow) == "function" then
         return getRow(achId)
@@ -838,7 +842,7 @@ local function GetAchievementRowForCallback(achId)
     return nil
 end
 
-local function FireAchievementCallback(kind, achId, row, reason, atOverride)
+FireAchievementCallback = function(kind, achId, row, reason, atOverride)
     local def = GetAchievementDefForCallback(achId, row)
     if not def then
         return
@@ -1344,6 +1348,39 @@ end
 
 if addon then addon.ApplyOutleveledStyle = ApplyOutleveledStyle end
 
+-- =========================================================
+-- Tracked indicator in Character Panel list
+-- =========================================================
+
+local function UpdateTrackedIndicatorForRow(row)
+    if not row then return end
+    if not row.TrackedCheck then return end
+    local id = row.id or row.achId
+    if not id then
+        row.TrackedCheck:Hide()
+        return
+    end
+    local tracker = addon and addon.AchievementTracker
+    local isTracked = tracker and type(tracker.IsTracked) == "function" and tracker:IsTracked(id) or false
+    row.TrackedCheck:SetShown(isTracked == true)
+end
+
+local function UpdateAllTrackedIndicators()
+    local panel = addon and addon.AchievementPanel
+    local rows = (panel and panel.achievements) or addon.AchievementRowModel or {}
+    for _, row in ipairs(rows) do
+        -- RowModel entries aren't frames; only update real UI rows.
+        if row and row.TrackedCheck ~= nil then
+            UpdateTrackedIndicatorForRow(row)
+        end
+    end
+end
+
+if addon then
+    addon.UpdateTrackedIndicatorForRow = UpdateTrackedIndicatorForRow
+    addon.UpdateAllTrackedIndicators = UpdateAllTrackedIndicators
+end
+
 -- Stable SavedVariables / progress key for a row (always the same string for a given acId).
 local function AchievementRowDbKey(row)
     if not row then return nil end
@@ -1722,7 +1759,11 @@ local function CheckPendingCompletions()
 
             -- New completion type: requiredTalkTo (NPC dialog/gossip opened)
             local def = row and row._def
-            if def and addon and addon.IsUnlockedBy and not addon.IsUnlockedBy(def) then
+
+            -- Self-found only: hide+block for non-self-found characters.
+            if def and def.selfFoundOnly and IsSelfFound and not IsSelfFound() then
+                completedThisRow = true -- short-circuit all other completion checks for this row
+            elseif def and addon and addon.IsUnlockedBy and not addon.IsUnlockedBy(def) then
                 -- Locked: do not evaluate completion triggers yet.
                 -- Visibility is handled by ApplyFilter (unlockedBy hides until prerequisites are complete).
                 completedThisRow = true -- short-circuit all other completion checks for this row
@@ -2448,6 +2489,11 @@ MarkRowCompletedWithToast = function(row)
     return newlyCompleted
 end
 
+-- Export so other modules/triggers can complete with the same toast behavior.
+if addon then
+    addon.MarkRowCompletedWithToast = MarkRowCompletedWithToast
+end
+
 -- Check if an achievement ID is a level milestone achievement (Level10, Level20, etc.)
 local function IsLevelMilestone(achId)
     if not achId or type(achId) ~= "string" then return false end
@@ -2457,11 +2503,11 @@ if addon then addon.IsLevelMilestone = IsLevelMilestone end
 
 local function ApplySelfFoundBonus()
     if not IsSelfFound() then return end
-    if not addon or not addon.HardcoreAchievementsDB or not addon.HardcoreAchievementsDB.chars then return end
+    if not addon or not addon.CustomGuildAchievementsDB or not addon.CustomGuildAchievementsDB.chars then return end
     if not AchievementPanel or not AchievementPanel.achievements then return end
 
     local guid = UnitGUID("player")
-    local charData = addon.HardcoreAchievementsDB.chars[guid]
+    local charData = addon.CustomGuildAchievementsDB.chars[guid]
     if not charData or not charData.achievements then return end
 
     -- Build a fast lookup table instead of scanning all rows per achievement.
@@ -2976,7 +3022,7 @@ end
 -- startNpc "!" pins (WorldMap + minimap direction)
 -- =========================================================
 -- Opt-in per achievement definition:
---   startNpc = { npcId = 466, mapId = 1453, x = 0.64, y = 0.75, mapPin = true, window = {...} }
+--   startNpc = { npcId = 466, coords = { mapId = 1453, x = 0.64, y = 0.75 }, window = {...} }
 -- Coordinates are normalized (0..1).
 do
     -- Use Raid Target "Diamond" icon everywhere (maps + minimap + nameplate marking).
@@ -3046,9 +3092,9 @@ do
                 -- Eligibility for raid marking is based on "has a startNpc" (not strictly map pins).
                 -- Opt-in signals:
                 -- - sn.raidMark == true (explicit)
-                -- - sn.mapPin == true (we already opted into map/minimap pins)
+                -- - sn.coords table (map/minimap pins)
                 -- - sn.window table (interactive startNpc)
-                local markOk = sn and (sn.raidMark == true or sn.mapPin == true or type(sn.window) == "table")
+                local markOk = sn and (sn.raidMark == true or type(sn.coords) == "table" or type(sn.window) == "table")
                 if markOk then
                     local nid = tonumber(sn.npcId) or tonumber(sn.id)
                     if nid then
@@ -3091,10 +3137,11 @@ do
             if row and achId and not IsAchievementAlreadyCompleted(row) and not IsTerminalFailed(achId) then
                 local def = row._def
                 local sn = def and def.startNpc
-                if sn and sn.mapPin == true then
-                    local mid = tonumber(sn.mapId)
-                    local x = tonumber(sn.x)
-                    local y = tonumber(sn.y)
+                if sn and type(sn.coords) == "table" then
+                    local coords = type(sn.coords) == "table" and sn.coords or sn
+                    local mid = tonumber(coords.mapId or coords.mapID)
+                    local x = tonumber(coords.x)
+                    local y = tonumber(coords.y)
                     if mid and mid == mapId and x and y and x >= 0 and x <= 1 and y >= 0 and y <= 1 then
                         table.insert(out, {
                             achId = tostring(achId),
@@ -3670,7 +3717,7 @@ initFrame:SetScript("OnEvent", function(self, event, ...)
         -- Initialize minimap button (lightweight, can run immediately)
         InitializeMinimapButton()
 
-        -- Enable startNpc "!" pins (only for defs that provide mapId/x/y and mapPin=true).
+        -- Enable startNpc "!" pins (only for defs that provide startNpc.coords).
         if addon and addon.EnableStartNpcMapPins then
             addon.EnableStartNpcMapPins()
         end
@@ -4541,6 +4588,10 @@ local function ApplyFilter()
                 shouldShow = false
             end
         end
+        -- Self-found only: hide for non-self-found characters
+        if shouldShow and (not row.completed) and row._def and row._def.selfFoundOnly and IsSelfFound and not IsSelfFound() then
+            shouldShow = false
+        end
         -- Hide GuildFirst achievements that are already claimed by someone else.
         -- IMPORTANT: only apply this to achievements explicitly marked as GuildFirst,
         -- otherwise we'll do unnecessary checks (and spam debug) for the entire catalog.
@@ -4833,6 +4884,15 @@ local function CreateAchievementRowFromData(data, index)
     row.IconFrame:SetTexture("Interface\\AddOns\\CustomGuildAchievements\\Images\\frame_silver.png")
     row.IconFrame:SetDrawLayer("OVERLAY", 1)
     row.IconFrame:Show()
+
+    -- Tracked indicator (quest-watch style): shown when this achievement is tracked in our tracker.
+    -- Sublevel must be between -8 and 7 (Classic constraint).
+    row.TrackedCheck = row.IconClip:CreateTexture(nil, "OVERLAY", nil, 7)
+    row.TrackedCheck:SetSize(14, 14)
+    row.TrackedCheck:SetPoint("TOPLEFT", row.IconClip, "TOPLEFT", 1, -1)
+    row.TrackedCheck:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
+    row.TrackedCheck:SetVertexColor(1.0, 0.82, 0.0, 1.0) -- golden/yellow
+    row.TrackedCheck:Hide()
 
     -- title
     row.Title = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -5271,6 +5331,12 @@ local function BuildAchievementRowsFromModel()
     for i, data in ipairs(addon.AchievementRowModel) do
         local row = CreateAchievementRowFromData(data, i)
         table_insert(AchievementPanel.achievements, row)
+    end
+    -- Now that rows exist, reflect current tracker state in the list.
+    if addon and addon.UpdateAllTrackedIndicators then
+        pcall(function()
+            addon.UpdateAllTrackedIndicators()
+        end)
     end
     SortAchievementRows()
     local apply = addon and addon.ApplyFilter
@@ -5910,6 +5976,16 @@ do
                         end
                     end
                 end
+                -- Auto-track on "activation" (button click) so the player can follow progress easily.
+                do
+                    local tracker = addon and addon.AchievementTracker
+                    if tracker and type(tracker.TrackAchievement) == "function" and def and def.achId then
+                        local title = def.title or tostring(def.achId)
+                        pcall(function()
+                            tracker:TrackAchievement(def.achId, title)
+                        end)
+                    end
+                end
                 f:Hide()
             end)
 
@@ -5949,7 +6025,8 @@ do
 
             w._cgaDef = def
             w._cgaNpcId = npcId
-            w._cgaRequireInteractDistance = (def.checkInteractDistance == true)
+            -- startNpc windows are only relevant at interaction distance; always close when out of range.
+            w._cgaRequireInteractDistance = true
             w.title:SetText(cfg.title or def.title or "")
             w.text:SetText(ExpandWindowTextPlaceholders(cfg.text or def.tooltip or ""))
             w.btn:SetText(cfg.buttonLabel or "OK")
@@ -5972,6 +6049,20 @@ do
                 w:Hide()
                 return
             end
+
+            -- If the achievement got completed while the window is open, close immediately.
+            do
+                for _, row in ipairs(addon.AchievementRowModel or {}) do
+                    if row and row._def == def then
+                        if IsAchievementAlreadyCompleted(row) then
+                            w:Hide()
+                            return
+                        end
+                        break
+                    end
+                end
+            end
+
             if not UnitExists("target") or UnitIsPlayer("target") then
                 w:Hide()
                 return
@@ -5982,7 +6073,7 @@ do
                 w:Hide()
                 return
             end
-            if w._cgaRequireInteractDistance and type(CheckInteractDistance) == "function" then
+            if type(CheckInteractDistance) == "function" then
                 if not CheckInteractDistance("target", 2) then
                     w:Hide()
                     return
@@ -7863,6 +7954,12 @@ do
         end
         registrationComplete = true
         Initialize()
+        -- dropItemOn: after definitions are registered, install pickup/target hooks.
+        if addon and addon.SetupDropItemOnTrigger then
+            pcall(function()
+                addon.SetupDropItemOnTrigger()
+            end)
+        end
     end
 
     f:RegisterEvent("ADDON_LOADED")
@@ -7885,7 +7982,42 @@ do
             -- Don't register anything outside the target guild.
             return
         end
-        if CharacterFrame and EnsureAchievementPanelCreated then
+        -- Ensure CharacterFrame exists before we execute the registration queue, otherwise
+        -- CreateAchievementRow calls will be skipped and the UI will appear empty.
+        local function EnsureCharacterUIReady()
+            if CharacterFrame then
+                return true
+            end
+            if type(UIParentLoadAddOn) == "function" then
+                pcall(UIParentLoadAddOn, "Blizzard_CharacterUI")
+            end
+            return CharacterFrame ~= nil
+        end
+
+        if not EnsureCharacterUIReady() then
+            -- Character UI not ready yet; retry shortly (common on fresh login).
+            C_Timer.After(0.2, function()
+                if addon and not addon.Disabled then
+                    -- Re-run the PLAYER_LOGIN branch logic once frames exist.
+                    if EnsureCharacterUIReady() then
+                        if EnsureAchievementPanelCreated then
+                            EnsureAchievementPanelCreated()
+                        end
+                        local queue = addon and addon.RegistrationQueue
+                        if queue and #queue > 0 then
+                            RegisterQueuedAchievements()
+                        else
+                            registrationComplete = true
+                            addon.Initializing = true
+                            Initialize()
+                        end
+                    end
+                end
+            end)
+            return
+        end
+
+        if EnsureAchievementPanelCreated then
             EnsureAchievementPanelCreated()
         end
         local queue = addon and addon.RegistrationQueue

@@ -12,22 +12,22 @@ local playerClass = classColor .. UnitClass("player") .. "|r"
 local CustomAchievements = {
   -- Example 1: target an NPC and /wave (locale-proof via DoEmote hook)
   {
-    achId = "CUSTOM-EMOTE-HELLO-GUARD",
-    title = "Polite citizen",
-    tooltip = "Talk to Melris Malagan and perform a /wave (while standing close enough).",
+    achId = "CUSTOM-EMOTE-HELLO-GUARD-01",
+    title = "Polite citizen (emote test)",
+    tooltip = "Go to Melris Malagan and perform a /bow (while standing close enough).",
     icon = 132485,
     points = 5,
     level = nil,
     targetNpcId = 12480, -- Melris Malagan
-    onEmote = "hello",
+    onEmote = "bow",
     checkInteractDistance = true,
     withIcon = "gossip",
   },
 
   -- Example 2: simple kill achievement
   {
-    achId = "CUSTOM-KILL-RAT-CHAIN-TEST-0001",
-    title = "Rat killer",
+    achId = "CUSTOM-KILL-RAT-CHAIN-TEST-00001",
+    title = "Rat killer (chain test)",
     tooltip = "Kill a Rat in Stormwind City.",
     icon = 132367,
     points = 5,
@@ -37,7 +37,7 @@ local CustomAchievements = {
     zone = "Stormwind City",
   },
   {
-    achId = "CUSTOM-KILL-RAT-CHAIN-TEST-0002",
+    achId = "CUSTOM-KILL-RAT-CHAIN-TEST-00002",
     title = "Rat killer II",
     tooltip = "Kill another Rat in Stormwind City.",
     icon = 132367,
@@ -46,10 +46,10 @@ local CustomAchievements = {
     targetNpcId = 4075, -- Rat
     zoneAccurate = 1453,
     zone = "Stormwind City",
-    unlockedBy = "CUSTOM-KILL-RAT-CHAIN-TEST-0001",
+    unlockedBy = "CUSTOM-KILL-RAT-CHAIN-TEST-00001",
   },
   {
-    achId = "CUSTOM-KILL-RAT-CHAIN-TEST-0003",
+    achId = "CUSTOM-KILL-RAT-CHAIN-TEST-00003",
     title = "Rat killer III",
     tooltip = "Kill yet another Rat in Stormwind City.",
     icon = 132367,
@@ -58,22 +58,22 @@ local CustomAchievements = {
     targetNpcId = 4075, -- Rat
     zoneAccurate = 1453,
     zone = "Stormwind City",
-    unlockedBy = "CUSTOM-KILL-RAT-CHAIN-TEST-0002",
+    unlockedBy = "CUSTOM-KILL-RAT-CHAIN-TEST-00002",
   },
   {
-    achId = "CUSTOM-ITEM-7723-INBAG",
-    title = "Mograine's Might (in bag)",
+    achId = "CUSTOM-ITEM-7723-INBAG-001",
+    title = "Get Mograine's Might in bag (item test)",
     tooltip = "Have Mograine's Might (item 7723) in your inventory.",
     icon = 136116,
     points = 5,
     level = nil,
     customItem = function()
-      return GetItemCount(7723, true) > 0
+      return GetItemCount(7723, false) > 0 -- false = no bank, true = bank
     end,
   },
   {
-    achId = "CUSTOM-ITEM-7723-EQUIPPED",
-    title = "Mograine's Might (equipped)",
+    achId = "CUSTOM-ITEM-7723-EQUIPPED-001",
+    title = "Get Mograine's Might equipped (slot test)",
     tooltip = "Have Mograine's Might (item 7723) equipped in any equipment slot.",
     icon = 136116,
     points = 5,
@@ -90,9 +90,9 @@ local CustomAchievements = {
     end,
   },
   {
-    achId = "CUSTOM-ATTEMPT-FALL-DAMAGE-5PCX",
+    achId = "CUSTOM-ATTEMPT-FALL-DAMAGE-5PV-01",
     title = "Leap of Faith (3 tries)",
-    tooltip = "Open gossip with General Marcus Jonathan to start a run. You have 3 attempts total to lose at least 5% HP from a single fall. Best fall % is kept across attempts.",
+    tooltip = "Open gossip with a Stormwind Guard to start a run. You have 3 attempts total to lose at least 5% HP from a single fall. Best fall % is kept across attempts.",
     icon = 132886,
     points = 10,
     level = nil,
@@ -100,11 +100,8 @@ local CustomAchievements = {
     attemptsAllowed = 3,
     requiredFallHpLossPct = 5,
     startNpc = {
-      npcId = 466, -- General Marcus Jonathan
-      mapId = 1453, -- Stormwind City
-      x = 0.64055508375168,
-      y = 0.75485122203827,
-      mapPin = true,
+      npcId = 68, -- Stormwind Guard
+      coords = { mapId = 1453, x = 0.64055508375168, y = 0.75485122203827 }, -- Stormwind City (coords => map pin)
       window = {
         title = "Leap of Faith",
         text = "Take a dangerous fall and lose at least 5% of your health in one impact.\n\nYou only have 3 starts total, but your best fall percentage is preserved across attempts.",
@@ -122,7 +119,7 @@ local CustomAchievements = {
       if not addon or not addon.GetProgress then
         return false
       end
-      local p = addon.GetProgress("CUSTOM-ATTEMPT-FALL-DAMAGE-5PC") or {}
+      local p = addon.GetProgress("CUSTOM-ATTEMPT-FALL-DAMAGE-5PV-01") or {}
       local done = tonumber(p.fallSuccessCount) or 0
       return done >= 3
     end,
@@ -130,19 +127,19 @@ local CustomAchievements = {
 
   -- Example 2b: target a specific player by name (string targetNpcId)
   {
-    achId = "CUSTOM-TARGET-PLAYER-NIGHTGLIMMER",
-    title = "Found you",
-    tooltip = "Target the player Nightglimmer.",
+    achId = "CUSTOM-TARGET-PLAYER-MACARONADE-01",
+    title = "Found you (target player test)",
+    tooltip = "Target the player Macaronade.",
     icon = 134216, -- Elf icon
     points = 5,
     level = nil,
-    targetNpcId = "Mavenrage",
+    targetNpcId = "Macaronade",
   },
 
   -- Example 3: spend a few copper at Frederick Stover (merchant)
   {
-    achId = "CUSTOM-BUY-BREAD-THOMAS-MILLER-3518",
-    title = "Breadwinner",
+    achId = "CUSTOM-BUY-BREAD-THOMAS-MILLER-3518-01",
+    title = "Breadwinner (spend at vendor test)",
     tooltip = "Buy some bread from Thomas Miller.",
     icon = 133784,
     points = 5,
@@ -154,8 +151,8 @@ local CustomAchievements = {
   
   -- Example 4: spend a few copper at Topper McNabb (beggar)
   {
-    achId = "CUSTOM-SPEND-GOLD-TOPPER-1402",
-    title = "Alms for the poor",
+    achId = "CUSTOM-SPEND-GOLD-TOPPER-1402-01",
+    title = "Alms for the poor (spend at npc test 2)",
     tooltip = "Could ye spare some coin?",
     icon = 133784,
     points = 5,
@@ -168,14 +165,13 @@ local CustomAchievements = {
         buttonLabel = "Give him the money",
         callback = function()
           local money = GetMoney and GetMoney() or 0
-          local hasGold = money >= 20000 -- 5 gold in copper
+          local hasGold = money >= 20000 -- 2 gold in copper
           if hasGold then
             if addon and addon._cgaPlayWindowSound then addon._cgaPlayWindowSound("coins") end
             local c = ChatTypeInfo and ChatTypeInfo.SAY
             local msg = "Topper McNabb says: Thank you for your generosity " .. playerName .. ". Long life to " .. guildName .. "!"
             if DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.AddMessage and c then
               DEFAULT_CHAT_FRAME:AddMessage(msg, c.r, c.g, c.b)
-              DEFAULT_CHAT_FRAME:AddMessage("Topper McNabb says: Wait, where is my gold??", c.r, c.g, c.b)
             else
               print(msg)
               print("Topper McNabb says: Wait, where is my gold??")
@@ -199,27 +195,26 @@ local CustomAchievements = {
     },
     checkInteractDistance = true,
   },
-
   -- Example 5: complete all those achievements 
   {
-    achId = "CUSTOM-COMBO-001",
-    title = "Complete those 5 achievements",
+    achId = "CUSTOM-COMBO-0001",
+    title = "Complete those 5 achievements (combo test)",
     tooltip = "You have completed 5 achievements.",
     icon = 236685,
     points = 0,
     level = 50,
     achiIds = {
-      "CUSTOM-EMOTE-HELLO-GUARD",
+      "CUSTOM-EMOTE-HELLO-GUARD-01",
       "CUSTOM-KILL-RAT-4075",
-      "CUSTOM-TARGET-PLAYER-NIGHTGLIMMER",
-      "CUSTOM-BUY-BREAD-THOMAS-MILLER-3518",
-      "CUSTOM-SPEND-GOLD-TOPPER-1402",
+      "CUSTOM-TARGET-PLAYER-MACARONADE-01",
+      "CUSTOM-BUY-BREAD-THOMAS-MILLER-3518-01",
+      "CUSTOM-SPEND-GOLD-TOPPER-1402-01",
     },
   },
   -- Example 6: complete any 5 achievements
   {
-    achId = "CUSTOM-COMBO-002",
-    title = "Achievement Hunter I",
+    achId = "CUSTOM-COMBO-0002",
+    title = "Achievement Hunter I (combo test 2)",
     tooltip = "Complete any 5 achievements.",
     icon = 134321,
     points = 0,
@@ -258,49 +253,51 @@ if addon then
 
   for _, def in ipairs(CustomAchievements) do
     def.isGuild = true
+    -- IMPORTANT: freeze `def` for the queued closure (PLAYER_LOGIN runs later).
+    local d = def
 
     -- Also append to the main guild list for UIs that read addon.GuildAchievements.
     if addon.GuildAchievements then
-      table_insert(addon.GuildAchievements, def)
+      table_insert(addon.GuildAchievements, d)
     end
 
     table_insert(queue, function()
-      if (not def.onEmote) and (not def.customKill) and (def.targetNpcId or def.requiredKills or def.requiredQuestId) and addon.registerQuestAchievement then
+      if (not d.onEmote) and (not d.customKill) and (d.targetNpcId or d.requiredKills or d.requiredQuestId) and addon.registerQuestAchievement then
         addon.registerQuestAchievement{
-          achId = def.achId,
-          requiredQuestId = def.requiredQuestId,
-          targetNpcId = def.targetNpcId,
-          requiredKills = def.requiredKills,
-          maxLevel = def.level,
-          faction = def.faction,
-          race = def.race,
-          class = def.class,
-          allowKillsBeforeQuest = def.allowKillsBeforeQuest,
-          zoneAccurate = def.zoneAccurate,
+          achId = d.achId,
+          requiredQuestId = d.requiredQuestId,
+          targetNpcId = d.targetNpcId,
+          requiredKills = d.requiredKills,
+          maxLevel = d.level,
+          faction = d.faction,
+          race = d.race,
+          class = d.class,
+          allowKillsBeforeQuest = d.allowKillsBeforeQuest,
+          zoneAccurate = d.zoneAccurate,
         }
       end
       if RegisterAchievementDef then
-        RegisterAchievementDef(def)
+        RegisterAchievementDef(d)
       end
-      if def.customIsCompleted and addon.RegisterCustomAchievement then
-        addon.RegisterCustomAchievement(def.achId, nil, def.customIsCompleted)
+      if d.customIsCompleted and addon.RegisterCustomAchievement then
+        addon.RegisterCustomAchievement(d.achId, nil, d.customIsCompleted)
       end
       local CreateAchievementRow = addon.CreateAchievementRow
       local AchievementPanel = addon.AchievementPanel
       if CreateAchievementRow and AchievementPanel then
         CreateAchievementRow(
           AchievementPanel,
-          def.achId,
-          def.title,
-          def.tooltip,
-          def.icon,
-          def.level,
-          def.points or 0,
-          GetKillTracker(def),
-          GetQuestTracker(def),
-          def.staticPoints,
-          def.zone,
-          def
+          d.achId,
+          d.title,
+          d.tooltip,
+          d.icon,
+          d.level,
+          d.points or 0,
+          GetKillTracker(d),
+          GetQuestTracker(d),
+          d.staticPoints,
+          d.zone,
+          d
         )
       end
     end)
