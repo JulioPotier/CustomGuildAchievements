@@ -261,7 +261,8 @@ local function registerMetaAchievement(def)
           local wasAlreadyFailed = false
           if addon and addon.GetCharDB then
             local _, cdb = addon.GetCharDB()
-            local rec = cdb and cdb.achievements and cdb.achievements[achId]
+            local skM = addon.GetAchievementStorageKey and addon.GetAchievementStorageKey(achId)
+            local rec = skM and cdb and cdb.achievements and cdb.achievements[skM]
             wasAlreadyFailed = rec and rec.failed
           end
           MarkAsFailed()

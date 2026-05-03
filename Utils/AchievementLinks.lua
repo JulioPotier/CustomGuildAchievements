@@ -73,7 +73,8 @@ local function ViewerHasCompletedAchievement(achId)
     local getDB = addon and addon.GetCharDB
     if type(getDB) == "function" then
         local _, cdb = getDB()
-        if cdb and cdb.achievements and cdb.achievements[key] and cdb.achievements[key].completed then
+        local skVw = addon.GetAchievementStorageKey and addon.GetAchievementStorageKey(key)
+        if skVw and cdb and cdb.achievements and cdb.achievements[skVw] and cdb.achievements[skVw].completed then
             return true
         end
     end

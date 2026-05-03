@@ -53,7 +53,8 @@ The engine listens to (see `CustomGuildAchievements.lua`):
 - **Quests**: `QUEST_ACCEPTED`, `QUEST_TURNED_IN`, `QUEST_REMOVED` (+ dialogs: `QUEST_*`)
 - **Targeting / mouseover**: `PLAYER_TARGET_CHANGED`, `UPDATE_MOUSEOVER_UNIT`
 - **Emotes**: `CHAT_MSG_TEXT_EMOTE` (+ locale-proof emote hook for `onEmote`)
-- **Items & inventory**: `UNIT_INVENTORY_CHANGED`, `BAG_UPDATE_DELAYED`, `LOOT_OPENED`, `CHAT_MSG_LOOT`
+- **Items & inventory**: `UNIT_INVENTORY_CHANGED`, `BAG_UPDATE_DELAYED`, `LOOT_OPENED`, `CHAT_MSG_LOOT`  
+  Secure hooks used by triggers: **`PickupContainerItem`** (drop-item-on NPC), **`UseContainerItem` / `UseInventoryItem` / `UseItemByName`** (consume / use-item achievements)
 - **NPC**: `GOSSIP_SHOW`, `GOSSIP_CLOSED`, `MERCHANT_SHOW`, `MERCHANT_CLOSED`
 - **Auras / mounts / forms**: `UNIT_AURA`, `PLAYER_MOUNT_DISPLAY_CHANGED`, `UPDATE_SHAPESHIFT_FORM`
 - **Movement**: `PLAYER_STARTED_MOVING` (“walk-only” rule for attempts)
@@ -106,6 +107,7 @@ There are two approaches:
 
 - **Dungeon sets / requiredItems**: some catalogs (e.g., dungeon sets) use an `IsCompleted` function associated with the achId, evaluated on `UNIT_INVENTORY_CHANGED`.
 - **Custom item tracker**: via **`customItem = function() ... end`** (see `Achievements/CustomCatalog.lua`).
+- **Use item (consume)**: **`useItem`** completes when the player **actually uses** the item (see **6.2**).
 
 ### 6) Auras / Spellcast / Emotes / Chat
 
@@ -137,6 +139,32 @@ Behavior:
 
 - when it matches, the addon **cancels the cursor pickup** (`ClearCursor()`) so the item is not lost,
 - then completes the achievement using the normal completion flow (toast animation included).
+
+### 6.2) Use / consume an item (“useItem”)
+
+Completes when the player **invokes item use**, e.g. **right‑click from bags** (`UseContainerItem`).  
+Implementation hooks (see `Utils/SharedUtils.lua` → `SetupUseItemTrigger`): `UseContainerItem`, `UseInventoryItem`, `UseItemByName`; definitions are rebuilt on `PLAYER_LOGIN` and `BAG_UPDATE_DELAYED`.
+
+**Definition**
+
+- Prefer a **table**:
+
+```lua
+useItem = { itemId = 4536 }, -- numeric item ID
+```
+
+- Shorthand **`useItem = 4536`** is also accepted (parsed as `{ itemId = 4536 }` internally).
+
+Behavior:
+
+- compares the **resolved item ID** after the hooked call completes the trigger when it matches **`itemId`**;
+- respects **`unlockedBy`** chains: `CompleteAchievementById` skips completion until prerequisites are satisfied (same as other triggers).
+
+Example chain (inventory then consume): keep an apple in bags first, then a second achievement with `useItem` and `unlockedBy` — see `Achievements/CustomCatalog.lua` (`CUSTOM-ITEM-7723-INBAG-001`, `CUSTOM-ITEM-4536-USE-001`).
+
+Limits:
+
+- triggering via **macros** still calls the hooked APIs — generally OK — but addons cannot hook every obscure path; unsupported cases are rare.
 
 ### 7) Exploration / zone discovery
 
@@ -262,6 +290,8 @@ Edit `Achievements/CustomCatalog.lua`. This file already contains examples (targ
 - **Talk-to**: `requiredTalkTo`, `talkToOrder`
 - **Open object**: `requiredOpenObject`
 - **Items**: `customItem = function() ... end`
+- **Drop item on NPC**: `dropItemOn = { itemId = …, nbItem = …, npcId = … }`
+- **Use / consume item**: `useItem = { itemId = … }` (or shorthand `useItem = itemId`)
 - **Meta / dependencies**:
   - `achiIds = { "ACH-1", "ACH-2", ... }` → completes when all are completed; fails if any dependency fails
   - `nbAchis = N` → completes when at least N achievements (from this addon) are completed

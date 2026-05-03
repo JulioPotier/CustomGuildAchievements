@@ -3,7 +3,7 @@
 
 local addonName, addon = ...
 local table_insert = table.insert
-local guildName = "|cffffd100" .. (GetGuildInfo("player") or (_G.CGA_GUILD_NAME or "No Guild")) .. "|r"
+local guildName = "|cffffd100" .. (GetGuildInfo("player") or "No Guild") .. "|r"
 local classColor = (addon and addon.GetClassColor and addon.GetClassColor()) or "|cffffd100"
 local rawPlayerName = UnitName("player")
 local playerName = classColor .. rawPlayerName .. "|r"
@@ -62,19 +62,29 @@ local CustomAchievements = {
   },
   {
     achId = "CUSTOM-ITEM-7723-INBAG-001",
-    title = "Get Mograine's Might in bag (item test)",
-    tooltip = "Have Mograine's Might (item 7723) in your inventory.",
+    title = "Keep a Shiny Red Apple in bag (item test)",
+    tooltip = "Have a Shiny Red Apple in your inventory.",
     icon = 136116,
     points = 5,
     level = nil,
     customItem = function()
-      return GetItemCount(7723, false) > 0 -- false = no bank, true = bank
+      return GetItemCount(4536, false) > 0 -- false = no bank, true = bank
     end,
   },
   {
+    achId = "CUSTOM-ITEM-4536-USE-001",
+    title = "Eat a Shiny Red Apple (use item test)",
+    tooltip = "Use a Shiny Red Apple. Right-click it from your bags.",
+    icon = 136116,
+    points = 5,
+    level = nil,
+    unlockedBy = "CUSTOM-ITEM-7723-INBAG-001",
+    useItem = 4536,
+  },
+  {
     achId = "CUSTOM-ITEM-7723-EQUIPPED-001",
-    title = "Get Mograine's Might equipped (slot test)",
-    tooltip = "Have Mograine's Might (item 7723) equipped in any equipment slot.",
+    title = "Wear your Guild Tabard (slot test)",
+    tooltip = "Have your Guild Tabard equipped to show your guild pride.",
     icon = 136116,
     points = 5,
     level = nil,
@@ -82,7 +92,7 @@ local CustomAchievements = {
       -- Classic equipment slots: 1..19 (head..ranged slot order; includes offhand).
       for slot = 1, 19 do
         local id = GetInventoryItemID("player", slot)
-        if id == 7723 then
+        if id == 5976 then
           return true
         end
       end

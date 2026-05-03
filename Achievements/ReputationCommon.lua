@@ -41,7 +41,8 @@ local function registerReputationAchievement(def)
   -- Check if achievement was already completed in database
   local function WasAlreadyCompleted()
     local _, cdb = GetCharDB()
-    return cdb and cdb.achievements and cdb.achievements[achId] and cdb.achievements[achId].completed
+    local sk = addon.GetAchievementStorageKey and addon.GetAchievementStorageKey(achId)
+    return sk and cdb and cdb.achievements and cdb.achievements[sk] and cdb.achievements[sk].completed
   end
 
   -- Get faction standing ID (8 = Exalted)

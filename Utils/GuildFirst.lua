@@ -494,18 +494,21 @@ local function EnsureDBForScope(scopeKey)
                                 local _, cdb = addon.GetCharDB()
                                 if cdb then
                                     local achId = tostring(key)
+                                    local skGw = addon.GetAchievementStorageKey and addon.GetAchievementStorageKey(achId)
                                     local def = GetGuildFirstDef(achId, nil)
                                     local pts = (def and def.points) or 0
-                                    cdb.achievements = cdb.achievements or {}
-                                    cdb.achievements[achId] = cdb.achievements[achId] or {}
-                                    local rec = cdb.achievements[achId]
-                                    rec.completed = true
-                                    rec.completedAt = rec.completedAt or time()
-                                    rec.points = rec.points or pts
-                                    rec.level = rec.level or (UnitLevel("player") or nil)
-                                    Debug("Persisted GuildFirst completion for " .. achId .. " (frame not yet built)")
-                                    if addon.UpdateTotalPoints then addon.UpdateTotalPoints() end
-                                    if addon.RestoreCompletionsFromDB then addon.RestoreCompletionsFromDB() end
+                                    if skGw then
+                                        cdb.achievements = cdb.achievements or {}
+                                        cdb.achievements[skGw] = cdb.achievements[skGw] or {}
+                                        local rec = cdb.achievements[skGw]
+                                        rec.completed = true
+                                        rec.completedAt = rec.completedAt or time()
+                                        rec.points = rec.points or pts
+                                        rec.level = rec.level or (UnitLevel("player") or nil)
+                                        Debug("Persisted GuildFirst completion for " .. achId .. " (frame not yet built)")
+                                        if addon.UpdateTotalPoints then addon.UpdateTotalPoints() end
+                                        if addon.RestoreCompletionsFromDB then addon.RestoreCompletionsFromDB() end
+                                    end
                                 end
                             end
                         end

@@ -434,7 +434,8 @@ local function ShowMetaAchievementRequirements(requiredAchievements, achievement
         end
         if not reqFailed and not reqCompleted and not reqRow and addon and addon.GetCharDB then
             local _, cdb = addon.GetCharDB()
-            local rec = cdb and cdb.achievements and cdb.achievements[tostring(reqAchId)]
+            local skRq = addon.GetAchievementStorageKey and addon.GetAchievementStorageKey(tostring(reqAchId))
+            local rec = skRq and cdb and cdb.achievements and cdb.achievements[skRq]
             if rec and rec.failed then
                 reqFailed = true
             end
@@ -470,7 +471,8 @@ local function ShowNbAchisProgress(currentAchId, nbAchis, achievementCompleted)
                 done = true
             elseif addon and addon.GetCharDB then
                 local _, cdb = addon.GetCharDB()
-                local rec = cdb and cdb.achievements and cdb.achievements[key]
+                local skNa = addon.GetAchievementStorageKey and addon.GetAchievementStorageKey(key)
+                local rec = skNa and cdb and cdb.achievements and cdb.achievements[skNa]
                 if rec and rec.completed then
                     done = true
                 end
@@ -549,7 +551,8 @@ local function ShowAchievementTooltip(frame, data)
         if type(getCharDB) == "function" then
             local _, cdb = getCharDB()
             if cdb and cdb.achievements then
-                local record = cdb.achievements[tostring(achId)]
+                local skMain = addon.GetAchievementStorageKey and addon.GetAchievementStorageKey(tostring(achId))
+                local record = skMain and cdb.achievements[skMain]
                 if record and record.completed then
                     achievementCompleted = true
                 end

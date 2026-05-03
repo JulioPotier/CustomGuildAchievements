@@ -19,6 +19,11 @@ local table_sort = table.sort
 local table_concat = table.concat
 local string_format = string.format
 
+local function ACHDBKEY(id)
+    if not id or not addon.GetAchievementStorageKey then return nil end
+    return addon.GetAchievementStorageKey(tostring(id))
+end
+
 local AchievementTracker = {}
 AchievementTracker.__index = AchievementTracker
 
@@ -380,7 +385,8 @@ local function RestoreTrackedAchievements()
         local getCharDB = addon and addon.GetCharDB
         if type(getCharDB) == "function" then
             local _, cdb = getCharDB()
-            if cdb and cdb.achievements and cdb.achievements[achIdStr] and cdb.achievements[achIdStr].completed then
+            local skIc = ACHDBKEY(achIdStr)
+            if skIc and cdb and cdb.achievements and cdb.achievements[skIc] and cdb.achievements[skIc].completed then
                 return true
             end
         end
@@ -923,7 +929,8 @@ local function GetAchievementDescription(achievementId)
     if type(getCharDB) == "function" then
         local _, cdb = getCharDB()
         if cdb and cdb.achievements then
-            local record = cdb.achievements[tostring(achievementId)]
+            local skAc = ACHDBKEY(achievementId)
+            local record = skAc and cdb.achievements[skAc]
             if record and record.completed then
                 achievementCompleted = true
             end
@@ -1386,7 +1393,8 @@ local function GetAchievementDescription(achievementId)
             end
             if not reqFailed and not reqCompleted and not reqRow and addon and addon.GetCharDB then
                 local _, cdb = addon.GetCharDB()
-                local rec = cdb and cdb.achievements and cdb.achievements[tostring(reqAchId)]
+                local skReq1 = ACHDBKEY(reqAchId)
+                local rec = skReq1 and cdb and cdb.achievements and cdb.achievements[skReq1]
                 if rec and rec.failed then
                     reqFailed = true
                 end
@@ -1437,7 +1445,8 @@ local function GetAchievementDescription(achievementId)
             end
             if not reqFailed and not reqCompleted and not reqRow and addon and addon.GetCharDB then
                 local _, cdb = addon.GetCharDB()
-                local rec = cdb and cdb.achievements and cdb.achievements[tostring(reqAchId)]
+                local skReq2 = ACHDBKEY(reqAchId)
+                local rec = skReq2 and cdb and cdb.achievements and cdb.achievements[skReq2]
                 if rec and rec.failed then
                     reqFailed = true
                 end
@@ -1471,7 +1480,8 @@ local function GetAchievementDescription(achievementId)
                         done = true
                     elseif addon and addon.GetCharDB then
                         local _, cdb = addon.GetCharDB()
-                        local rec = cdb and cdb.achievements and cdb.achievements[key]
+                        local skNb = ACHDBKEY(key)
+                        local rec = skNb and cdb and cdb.achievements and cdb.achievements[skNb]
                         if rec and rec.completed then
                             done = true
                         end
@@ -1521,8 +1531,9 @@ local function GetAchievementStatus(achievementId)
         local getCharDB = addon and addon.GetCharDB
         if type(getCharDB) == "function" then
             local _, cdb = getCharDB()
-            if cdb and cdb.achievements and cdb.achievements[achIdStr] then
-                isCompleted = cdb.achievements[achIdStr].completed or false
+            local skGst = ACHDBKEY(achIdStr)
+            if skGst and cdb and cdb.achievements and cdb.achievements[skGst] then
+                isCompleted = cdb.achievements[skGst].completed or false
             end
         end
     end
@@ -1887,14 +1898,10 @@ local function Update(self)
             if row and row.completed then
                 remove = true
             elseif cdb and cdb.achievements then
-                local rec = cdb.achievements[tostring(aid)]
+                local skPr = ACHDBKEY(aid)
+                local rec = skPr and cdb.achievements[skPr]
                 if rec and rec.completed then
                     remove = true
-                else
-                    local naid = tonumber(aid)
-                    if naid and cdb.achievements[naid] and cdb.achievements[naid].completed then
-                        remove = true
-                    end
                 end
             end
             if remove then
@@ -2064,7 +2071,8 @@ local function Update(self)
                         isCompleted = true
                     elseif addon and addon.GetCharDB then
                         local _, cdb = addon.GetCharDB()
-                        local rec = cdb and cdb.achievements and cdb.achievements[tostring(achievementId)]
+                        local skFa = ACHDBKEY(achievementId)
+                        local rec = skFa and cdb and cdb.achievements and cdb.achievements[skFa]
                         if rec and rec.completed == true then
                             isCompleted = true
                         end
@@ -2082,7 +2090,8 @@ local function Update(self)
                         -- Fallback after completion: progress may be cleared; read persisted summary from achievements record.
                         if (best <= 0 and done <= 0) and addon.GetCharDB then
                             local _, cdb = addon.GetCharDB()
-                            local rec = cdb and cdb.achievements and cdb.achievements[tostring(achievementId)] or nil
+                            local skFb = ACHDBKEY(achievementId)
+                            local rec = skFb and cdb and cdb.achievements and cdb.achievements[skFb] or nil
                             best = tonumber(rec and rec.maxFallHpLossPct) or best
                             done = tonumber(rec and rec.fallSuccessCount) or done
                             total = tonumber(rec and rec.attemptsAllowed) or total
@@ -2433,7 +2442,8 @@ local function TrackAchievement(self, achievementId, title)
             local getCharDB = addon and addon.GetCharDB
             if type(getCharDB) == "function" then
                 local _, cdb = getCharDB()
-                if cdb and cdb.achievements and cdb.achievements[achIdStr] and cdb.achievements[achIdStr].completed then
+                local skTr = ACHDBKEY(achIdStr)
+                if skTr and cdb and cdb.achievements and cdb.achievements[skTr] and cdb.achievements[skTr].completed then
                     isCompleted = true
                 end
             end

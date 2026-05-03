@@ -3,7 +3,7 @@
 ---------------------------------------
 local addonName, addon = ...
 local table_insert = table.insert
-local guildName = "|cffffd100" .. (GetGuildInfo("player") or (_G.CGA_GUILD_NAME or "No Guild")) .. "|r"
+local guildName = "|cffffd100" .. (GetGuildInfo("player") or "No Guild") .. "|r"
 local classColor = (addon and addon.GetClassColor and addon.GetClassColor()) or "|cffffd100"
 local rawPlayerName = UnitName("player")
 local playerName = classColor .. rawPlayerName .. "|r"
@@ -30,7 +30,7 @@ GuildAchievements = {
   {
     achId = "GUILD-WELCOME",
     title = "A " .. playerClass .. " for " .. guildName .. "!",
-    tooltip = "Welcome to Adventure Co " .. playerName .. "!\n\nWe're so glad to have you with us!\nOur Guild is about friendship, support and surviving hardcore together - no one should walk the road alone.\n\nGlad to have you on board, and may your journey be long and full of fun! \n\n/Rentjärn - " .. guildName .. " Guild Master",
+    tooltip = "Welcome to " .. guildName .. ", " .. playerName .. "!\n\n. You are now a member of the guild, explore the world and complete achievements to progress in the guild. Have fun!",
     icon = (GetClassIcon and GetClassIcon()) or 136116,
     -- Core only auto-completes via customIsCompleted. Must use addon.IsInTargetGuild (set in
     -- CustomGuildAchievements.lua); IsInTargetGuild is not a global in this file — calling it was nil and pcall() failed.
@@ -38,8 +38,8 @@ GuildAchievements = {
       if type(addon.IsInTargetGuild) == "function" then
         return addon.IsInTargetGuild()
       end
-      local guildName = GetGuildInfo("player")
-      return guildName and guildName == (_G.CGA_GUILD_NAME or "Adventure Co")
+      local gName = GetGuildInfo("player")
+      return gName ~= nil and gName ~= ""
     end,
   },
   -- // SELFOUND
@@ -102,7 +102,7 @@ GuildAchievements = {
     attemptEnabled = true,
     startNpc = {
       npcId = 1756,
-      text = "\nRoyal rush\n\nHello " .. rawPlayerName .. "! You will have to find your way to the Stormwind Keep and speak with Anduin Wrynn to win this achievement.\n\nTry your best at Adventure Co.",
+      text = "\nRoyal rush\n\nHello " .. rawPlayerName .. "! You will have to find your way to the Stormwind Keep and speak with Anduin Wrynn to win this achievement.\n\nGood luck!",
       buttonLabel = "Accept quest",
     },
     requiredTarget = TARGETS_MEET_KINGS_LIST,

@@ -297,7 +297,9 @@ function M.registerQuestAchievement(cfg)
         local _, cdb = GetCharDB()
         if not cdb or not cdb.progress then return end
 
-        local p = cdb.progress[tostring(ACH_ID)]
+        local skW = addon.GetAchievementStorageKey and addon.GetAchievementStorageKey(tostring(ACH_ID))
+        if not skW then return end
+        local p = cdb.progress[skW]
         if type(p) ~= "table" then return end
 
         -- Drop only completion-driving progress gathered while inactive.
@@ -319,9 +321,9 @@ function M.registerQuestAchievement(cfg)
         end
 
         if empty then
-            cdb.progress[tostring(ACH_ID)] = nil
+            cdb.progress[skW] = nil
         else
-            cdb.progress[tostring(ACH_ID)] = p
+            cdb.progress[skW] = p
         end
 
         state.killed = false

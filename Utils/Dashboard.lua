@@ -837,7 +837,8 @@ local function GetMostRecentCompletedSet(srcRows, maxCount)
     if srow and srow.completed then
       local key = tostring(srow.achId or srow.id or "")
       if key ~= "" then
-        local rec = cdb.achievements[key]
+        local skDas = addon.GetAchievementStorageKey and addon.GetAchievementStorageKey(key)
+        local rec = skDas and cdb.achievements[skDas]
         local ts = rec and rec.completedAt
         if ts then
           table_insert(tmp, { key = key, ts = tonumber(ts) or 0 })
@@ -1526,8 +1527,9 @@ local function UpdateDashboardModernRow(row, srow)
         if row.completed and type(GetCharDB) == "function" then
             local _, cdb = GetCharDB()
             local achKey = tostring(achId or "")
-            if achKey ~= "" and cdb and cdb.achievements and cdb.achievements[achKey] then
-                local timestamp = cdb.achievements[achKey].completedAt
+            local skDa = addon.GetAchievementStorageKey and addon.GetAchievementStorageKey(achKey)
+            if skDa and achKey ~= "" and cdb and cdb.achievements and cdb.achievements[skDa] then
+                local timestamp = cdb.achievements[skDa].completedAt
                 if timestamp then
                     row.TS:SetText(FormatTimestampDashboard(timestamp))
                 else
@@ -2125,8 +2127,10 @@ function DASHBOARD:BuildModernRows(srcRows)
     if isDashboardView then
       local aId = tostring(a.achId or a.id or "")
       local bId = tostring(b.achId or b.id or "")
-      local aRec = (aId ~= "" and cdb and cdb.achievements) and cdb.achievements[aId] or nil
-      local bRec = (bId ~= "" and cdb and cdb.achievements) and cdb.achievements[bId] or nil
+      local skA = (aId ~= "" and addon.GetAchievementStorageKey) and addon.GetAchievementStorageKey(aId)
+      local skB = (bId ~= "" and addon.GetAchievementStorageKey) and addon.GetAchievementStorageKey(bId)
+      local aRec = (skA and cdb and cdb.achievements) and cdb.achievements[skA] or nil
+      local bRec = (skB and cdb and cdb.achievements) and cdb.achievements[skB] or nil
       local aTimestamp = (aRec and aRec.completedAt) or 0
       local bTimestamp = (bRec and bRec.completedAt) or 0
       if aTimestamp ~= bTimestamp then

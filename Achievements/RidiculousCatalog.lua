@@ -26,7 +26,8 @@ local RidiculousAchievements = {
       
       -- Check if achievement is already failed (e.g., player was max level on first load)
       local achId = "NoJumpChallenge"
-      local rec = cdb.achievements and cdb.achievements[achId]
+      local skNj = addon.GetAchievementStorageKey and addon.GetAchievementStorageKey(achId)
+      local rec = skNj and cdb.achievements and cdb.achievements[skNj]
       if rec and rec.failed then
         return false
       end

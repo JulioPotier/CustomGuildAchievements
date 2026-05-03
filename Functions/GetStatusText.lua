@@ -38,8 +38,9 @@ local function GetStatusParamsForAchievement(achId, row)
     local wasSolo = false
     if row.completed and addon and addon.GetCharDB then
         local _, cdb = addon.GetCharDB()
-        if cdb and cdb.achievements and rowId then
-            local rec = cdb.achievements[tostring(rowId)]
+        local skSt = addon.GetAchievementStorageKey and addon.GetAchievementStorageKey(tostring(rowId))
+        if skSt and cdb and cdb.achievements then
+            local rec = cdb.achievements[skSt]
             wasSolo = rec and rec.wasSolo or false
         end
     end

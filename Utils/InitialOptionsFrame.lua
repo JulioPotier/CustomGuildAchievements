@@ -12,6 +12,18 @@ local addonName, addon = ...
 local GetCharDB = addon and addon.GetCharDB
 local UnitClass = UnitClass
 local CreateFrame = CreateFrame
+local GetGuildInfo = GetGuildInfo
+
+local function UpdateInitialSetupTabardVisibility(texture)
+    if not texture then return end
+    local g = GetGuildInfo and GetGuildInfo("player")
+    local want = (_G.CGA_TABARD_GUILD_NAME) or "Adventure Co"
+    if g and want and g == want then
+        texture:Show()
+    else
+        texture:Hide()
+    end
+end
 
 -- Class background textures (same as Dashboard.lua)
 local CLASS_BACKGROUND_MAP = {
@@ -177,6 +189,8 @@ local function CreateInitialOptionsFrame()
     settingsIcon:SetSize(96, 96)
     settingsIcon:SetPoint("TOPRIGHT", divider, "BOTTOMRIGHT", -10, 8)
     settingsIcon:SetAlpha(1)
+    frame.AdventureCoTabardDecor = settingsIcon
+    UpdateInitialSetupTabardVisibility(settingsIcon)
 
     local anchor = subtitleText
 
@@ -282,6 +296,9 @@ local function ShowInitialOptionsIfNeeded()
     cdb.settings = cdb.settings or {}
     if cdb.settings.initialSetupDone == true then return end
     local frame = CreateInitialOptionsFrame()
+    if frame.AdventureCoTabardDecor then
+        UpdateInitialSetupTabardVisibility(frame.AdventureCoTabardDecor)
+    end
     frame:Show()
 end
 

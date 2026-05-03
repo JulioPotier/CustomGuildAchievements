@@ -228,20 +228,21 @@ local function ProcessDeleteAchievementCommand(payload, sender)
     
     local id = achievementRow.id or achievementRow.achId
     if not id then id = payload.achievementId end
+    local skDel = addon.GetAchievementStorageKey and addon.GetAchievementStorageKey(tostring(id))
     local hadAchievement = false
     
     -- Check if achievement exists in database
-    if cdb.achievements and cdb.achievements[id] then
+    if skDel and cdb.achievements and cdb.achievements[skDel] then
         hadAchievement = true
     end
     
     -- Full purge: remove achievement record (completion, failed state, timestamps) and all progress
     cdb.achievements = cdb.achievements or {}
-    cdb.achievements[id] = nil
+    if skDel then cdb.achievements[skDel] = nil end
     
     -- Clear progress for this achievement
-    if cdb.progress then
-        cdb.progress[id] = nil
+    if skDel and cdb.progress then
+        cdb.progress[skDel] = nil
     end
 
     -- Tombstone (only when permanent): prevent GuildFirst onChange from re-awarding if claim syncs back
@@ -486,58 +487,50 @@ local function ProcessAdminCommand(payload, sender)
 			local _, cdb = addon.GetCharDB()
 			if cdb then
 				cdb.achievements = cdb.achievements or {}
-				local id = achievementRow.id
-				local rec = cdb.achievements[id] or {}
-				rec.completed = true
-				-- Preserve existing completion timestamp if present; otherwise set now
-				if not rec.completedAt then
-					rec.completedAt = time()
-				end
-				
-				-- Handle solo flag
-				if payload.solo then
-					rec.wasSolo = true
-				end
-				
-				-- Use overridePoints if provided, otherwise keep existing points
-				local newPoints = tonumber(payload.overridePoints) or rec.points or achievementRow.points or 0
-				
-				rec.points = newPoints
-				-- Use overrideLevel if provided, otherwise keep existing or UnitLevel("player")
-				local newLevel = tonumber(payload.overrideLevel) or rec.level or (UnitLevel("player") or nil)
-				rec.level = newLevel
-				-- Clear failed status when manually awarding achievement
-				rec.failed = nil
-				rec.failedAt = nil
-				cdb.achievements[id] = rec
-				-- Reflect in UI
-				achievementRow.points = newPoints
-				if achievementRow.Points then
-					achievementRow.Points:SetText(tostring(newPoints))
-					achievementRow.Points:SetTextColor(0.6, 0.9, 0.6)
-				end
-				if achievementRow.TS then
-					local fmtTs = (addon and addon.FormatTimestamp) or FormatTimestamp
-					achievementRow.TS:SetText(fmtTs(rec.completedAt))
-				end
-				-- Update solo status in UI if applicable
-				if payload.solo and achievementRow.Sub then
-					local isHardcoreActive = C_GameRules and C_GameRules.IsHardcoreActive and C_GameRules.IsHardcoreActive() or false
-					local allowSoloBonus = IsSelfFound() or not isHardcoreActive
-					if allowSoloBonus then
-                        local ClassColor = (addon and addon.ClassColor())
-						achievementRow.Sub:SetText(AUCTION_TIME_LEFT0 .. "\n" .. ClassColor .. "Solo|r")
+				local idRw = achievementRow.id or achievementRow.achId
+				local skAd = addon.GetAchievementStorageKey and addon.GetAchievementStorageKey(tostring(idRw))
+				if skAd then
+					local rec = cdb.achievements[skAd] or {}
+					rec.completed = true
+					if not rec.completedAt then
+						rec.completedAt = time()
 					end
-				end
-				if addon and type(addon.UpdateTotalPoints) == "function" then
-					addon.UpdateTotalPoints()
-				end
-				-- Toast to indicate update
-				local showToast = (addon and addon.CreateAchToast)
-				if type(showToast) == "function" then
-					local iconTex = (achievementRow.Icon and achievementRow.Icon.GetTexture) and achievementRow.Icon:GetTexture() or achievementRow.icon or 134400
-					local titleText = (achievementRow.Title and achievementRow.Title.GetText) and achievementRow.Title:GetText() or achievementRow.title or "Achievement"
-					showToast(iconTex, titleText, newPoints)
+					if payload.solo then
+						rec.wasSolo = true
+					end
+					local newPoints = tonumber(payload.overridePoints) or rec.points or achievementRow.points or 0
+					rec.points = newPoints
+					local newLevel = tonumber(payload.overrideLevel) or rec.level or (UnitLevel("player") or nil)
+					rec.level = newLevel
+					rec.failed = nil
+					rec.failedAt = nil
+					cdb.achievements[skAd] = rec
+					achievementRow.points = newPoints
+					if achievementRow.Points then
+						achievementRow.Points:SetText(tostring(newPoints))
+						achievementRow.Points:SetTextColor(0.6, 0.9, 0.6)
+					end
+					if achievementRow.TS then
+						local fmtTs = (addon and addon.FormatTimestamp) or FormatTimestamp
+						achievementRow.TS:SetText(fmtTs(rec.completedAt))
+					end
+					if payload.solo and achievementRow.Sub then
+						local isHardcoreActive = C_GameRules and C_GameRules.IsHardcoreActive and C_GameRules.IsHardcoreActive() or false
+						local allowSoloBonus = IsSelfFound() or not isHardcoreActive
+						if allowSoloBonus then
+							local ClassColor = (addon and addon.ClassColor())
+							achievementRow.Sub:SetText(AUCTION_TIME_LEFT0 .. "\n" .. ClassColor .. "Solo|r")
+						end
+					end
+					if addon and type(addon.UpdateTotalPoints) == "function" then
+						addon.UpdateTotalPoints()
+					end
+					local showToast = (addon and addon.CreateAchToast)
+					if type(showToast) == "function" then
+						local iconTex = (achievementRow.Icon and achievementRow.Icon.GetTexture) and achievementRow.Icon:GetTexture() or achievementRow.icon or 134400
+						local titleText = (achievementRow.Title and achievementRow.Title.GetText) and achievementRow.Title:GetText() or achievementRow.title or "Achievement"
+						showToast(iconTex, titleText, newPoints)
+					end
 				end
 				SendResponseToAdmin(sender, "|cff00ff00[Custom Guild Achievements]|r Achievement '" .. payload.achievementId .. "' updated via admin command")
 				return true
@@ -565,8 +558,10 @@ local function ProcessAdminCommand(payload, sender)
 		local _, cdb = addon.GetCharDB()
 		if cdb then
 			cdb.progress = cdb.progress or {}
-			local id = achievementRow.id
-			local progress = cdb.progress[id] or {}
+			local idSl = achievementRow.id or achievementRow.achId
+			local skSl = addon.GetAchievementStorageKey and addon.GetAchievementStorageKey(tostring(idSl))
+			if skSl then
+			local progress = cdb.progress[skSl] or {}
 			
 			-- Set solo status in progress (this is what MarkRowCompleted checks)
 			progress.soloKill = true
@@ -599,7 +594,8 @@ local function ProcessAdminCommand(payload, sender)
 				progress.pointsAtKill = basePoints * 2
 			end
 			
-			cdb.progress[id] = progress
+			cdb.progress[skSl] = progress
+			end
 		end
 	end
 
@@ -613,11 +609,14 @@ local function ProcessAdminCommand(payload, sender)
 	local _, cdb = addon.GetCharDB()
 	if cdb then
 		cdb.achievements = cdb.achievements or {}
-		local id = achievementRow.id
-		local rec = cdb.achievements[id]
-		if rec then
-			rec.failed = nil
-			rec.failedAt = nil
+		local idMc = achievementRow.id or achievementRow.achId
+		local skMc = addon.GetAchievementStorageKey and addon.GetAchievementStorageKey(tostring(idMc))
+		if skMc then
+			local rec = cdb.achievements[skMc]
+			if rec then
+				rec.failed = nil
+				rec.failedAt = nil
+			end
 		end
 	end
 	
@@ -628,11 +627,12 @@ local function ProcessAdminCommand(payload, sender)
 			local _, cdb = addon.GetCharDB()
 			if cdb then
 				cdb.achievements = cdb.achievements or {}
-				local id = achievementRow.id
-				local rec = cdb.achievements[id]
+				local idOl = achievementRow.id or achievementRow.achId
+				local skOl = addon.GetAchievementStorageKey and addon.GetAchievementStorageKey(tostring(idOl))
+				local rec = skOl and cdb.achievements[skOl]
 				if rec then
 					rec.level = lvl
-					cdb.achievements[id] = rec
+					cdb.achievements[skOl] = rec
 				end
 			end
 		end

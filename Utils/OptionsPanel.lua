@@ -1,5 +1,21 @@
 local addonName, addon = ...
 local GetCharDB = addon and addon.GetCharDB
+local GetGuildInfo = GetGuildInfo
+
+local function ShouldShowAdventureCoTabardDecor()
+    local g = GetGuildInfo and GetGuildInfo("player")
+    local want = (_G.CGA_TABARD_GUILD_NAME) or "Adventure Co"
+    return g and want and g == want
+end
+
+local function UpdateAdventureCoTabardDecor(texture)
+    if not texture then return end
+    if ShouldShowAdventureCoTabardDecor() then
+        texture:Show()
+    else
+        texture:Hide()
+    end
+end
 
 -- Load AceSerializer (still needed for old format fallback)
 local AceSerialize = LibStub("AceSerializer-3.0")
@@ -71,6 +87,29 @@ local function ShouldAnnounceInGuildChat()
         end
     end
     return true
+end
+
+local CGA_ISSUES_URL = "https://github.com/JulioPotier/CustomGuildAchievements/issues"
+if StaticPopupDialogs and not StaticPopupDialogs["CGA_COPY_ISSUES_URL"] then
+    StaticPopupDialogs["CGA_COPY_ISSUES_URL"] = {
+        text = "Copy the URL (Ctrl+C) and open it in your browser:",
+        button1 = OKAY,
+        hasEditBox = 1,
+        editBoxWidth = 380,
+        maxLetters = #CGA_ISSUES_URL + 8,
+        OnShow = function(self)
+            self.editBox:SetText(CGA_ISSUES_URL)
+            self.editBox:HighlightText()
+            self.editBox:SetFocus()
+        end,
+        EditBoxOnEnterPressed = function(self)
+            self:GetParent():Hide()
+        end,
+        timeout = 0,
+        exclusive = 0,
+        whileDead = 1,
+        hideOnEscape = 1,
+    }
 end
 
 -- =========================================================
@@ -515,6 +554,7 @@ local function CreateOptionsPanel()
     tabard:SetSize(96, 96)
     tabard:SetPoint("TOPRIGHT", -22, -10)
     tabard:SetAlpha(1)
+    UpdateAdventureCoTabardDecor(tabard)
     
     -- Create subtitle/description
     local subtitle = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
@@ -650,11 +690,33 @@ local function CreateOptionsPanel()
     -- Credits text
     local creditsText = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     creditsText:SetPoint("TOPLEFT", creditsCategoryTitle, "BOTTOMLEFT", 0, -8)
-    creditsText:SetText("Forked from |cffffff00HardcoreAchievements|r\nDev by |cffffff00Rogue2112|r")
+    creditsText:SetText("Forked from |cffffff00HardcoreAchievements|r\nDev by |cffffff00Kirby2112|r")
     creditsText:SetTextColor(0.8, 0.8, 0.8, 1)
     creditsText:SetWidth(600)
     creditsText:SetJustifyH("LEFT")
     creditsText:SetJustifyV("TOP")
+
+    local issuesIntro = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+    issuesIntro:SetPoint("TOPLEFT", creditsText, "BOTTOMLEFT", 0, -12)
+    issuesIntro:SetWidth(600)
+    issuesIntro:SetJustifyH("LEFT")
+    issuesIntro:SetJustifyV("TOP")
+    issuesIntro:SetText("Report bugs / issues:")
+    issuesIntro:SetTextColor(0.8, 0.8, 0.8, 1)
+
+    local issuesButton = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    issuesButton:SetPoint("TOPLEFT", issuesIntro, "BOTTOMLEFT", 0, -8)
+    issuesButton:SetText("GitHub Issues")
+    issuesButton:SetWidth(150)
+    issuesButton:SetHeight(25)
+    issuesButton:SetScript("OnClick", function()
+        if C_Link and type(C_Link.OpenURL) == "function" then
+            C_Link.OpenURL(CGA_ISSUES_URL)
+        else
+            StaticPopup_Show("CGA_COPY_ISSUES_URL")
+        end
+    end)
+    AddTooltipToCheckbox(issuesButton, CGA_ISSUES_URL)
     
     -- Store references for future use
     panel.checkboxes = {
@@ -680,6 +742,7 @@ local function CreateOptionsPanel()
         if modernRowsCB then
             modernRowsCB:SetChecked(GetSetting("modernRows", true))
         end
+        UpdateAdventureCoTabardDecor(tabard)
     end
     
     -- Register with Settings API (newer API for Classic Era)

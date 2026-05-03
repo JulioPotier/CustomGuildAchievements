@@ -27,7 +27,8 @@ local function FailNoJumpChallengeIfNeeded(cdb, refreshUI)
     if not cdb then return end
     
     cdb.achievements = cdb.achievements or {}
-    local rec = cdb.achievements[NO_JUMP_ACHIEVEMENT_ID]
+    local skNj = addon.GetAchievementStorageKey and addon.GetAchievementStorageKey(NO_JUMP_ACHIEVEMENT_ID)
+    local rec = skNj and cdb.achievements[skNj]
     
     -- Only fail if not already completed or failed
     if not rec or (not rec.completed and not rec.failed) then

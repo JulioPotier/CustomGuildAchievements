@@ -12,10 +12,6 @@ local string_format = string.format
 local guildName, guildRankName, guildRankIndex, realm = GetGuildInfo("player")
 local ClassColor = (addon and addon.GetClassColor())
 
-function guildIsAdventureCo()
-  return guildName == "Adventure Co"
-end
-
 local RaresAchievements = {
   --{ achId="Test001",  title="Sheep Test", tooltip="Kill " .. ClassColor .. "a Sheep|r (test)", icon=136071, points=10, targetNpcId=1933 },
   { achId="Test017",  title="Anduin Wrynn", tooltip="Talk to Anduin Wrynn", icon=135993, points=10, customIsCompleted = function() return UnitGUID("target") == 6740 end, },
@@ -127,14 +123,12 @@ function getClassConst()
   end
 end
 
-if guildIsAdventureCo() then
-  table.insert(RaresAchievements, 
+table.insert(RaresAchievements, 
     { 
       achId="advco01", 
       icon=getClassConst(),
       title="A " .. ClassColor .. UnitClass("player") .. "|r for " .. guildName, tooltip="As a fellow " .. ClassColor .. UnitClass("player") .. " " .. GetUnitName("player") .. "|r, you are now part of the " .. guildName .. ".\nStay safe and have fun." }
   )
-end
 
 local function IsEligible(def)
   -- Faction: "Alliance" / "Horde"

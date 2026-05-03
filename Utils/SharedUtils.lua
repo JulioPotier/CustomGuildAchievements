@@ -419,6 +419,8 @@ local function RegisterAchievementDef(def, overrides)
         targetOrder = def.targetOrder,
         -- dropItemOn: { itemId, nbItem, npcId } (array style). Intercept bag pickup + target NPC to complete.
         dropItemOn = def.dropItemOn,
+        -- useItem: numeric itemId or { itemId = n } — hook UseContainerItem / spell cast (see SetupUseItemTrigger).
+        useItem = def.useItem,
         requiredQuestId = def.requiredQuestId,
         -- Dungeon/Raid-specific fields
         mapID = def.requiredMapId or def.mapID,
@@ -551,6 +553,70 @@ local function BuildDropItemOnDefs()
     return result
 end
 
+local function EnsureUseItemState()
+    if not addon then return nil end
+    addon._cgaUseItem = addon._cgaUseItem or {
+        hooked = false,
+        defs = nil, -- map achId -> cfg { itemId }
+    }
+    return addon._cgaUseItem
+end
+
+local function BuildUseItemDefs()
+    if not addon then return nil end
+    local defs = addon.AchievementDefs or {}
+    local result = {}
+    for achId, def in pairs(defs) do
+        local d = def
+        local cfg = d and d.useItem
+        local itemId = nil
+        if type(cfg) == "number" then
+            itemId = tonumber(cfg)
+        elseif type(cfg) == "table" then
+            itemId = tonumber(cfg.itemId or cfg.id)
+        end
+        if itemId then
+            result[tostring(achId)] = { itemId = itemId }
+        end
+    end
+    return result
+end
+
+-- spellId -> { itemId, ... } (useful when hooksecurefunc on UseContainerItem runs *after*
+-- consume: stack-count-1 slots may already be empty).
+local function BuildUseItemSpellToItems(defMap)
+    local rev = {}
+    if not defMap then return rev end
+    for _, cfg in pairs(defMap) do
+        local itemId = cfg and tonumber(cfg.itemId)
+        if itemId and itemId > 0 and type(GetItemSpell) == "function" then
+            local ok, a, b = pcall(GetItemSpell, itemId)
+            local spellId = nil
+            if ok and b and type(b) == "number" and b > 0 then
+                spellId = b
+            elseif ok and a and type(a) == "string" and a ~= "" and type(GetSpellInfo) == "function" then
+                local gok, seventh = pcall(function()
+                    return select(7, GetSpellInfo(a))
+                end)
+                if gok then
+                    spellId = tonumber(seventh)
+                end
+            end
+            if spellId and spellId > 0 then
+                rev[spellId] = rev[spellId] or {}
+                table.insert(rev[spellId], itemId)
+            end
+        end
+    end
+    return rev
+end
+
+local function RefreshUseItemCaches(st)
+    if not st then return end
+    st.defs = BuildUseItemDefs()
+    st.spellToItems = BuildUseItemSpellToItems(st.defs)
+end
+
 local function CompleteAchievementById(achId)
     if not addon or not achId then return false end
     local id = tostring(achId)
@@ -578,9 +644,11 @@ local function CompleteAchievementById(achId)
     if addon.GetCharDB and type(addon.GetCharDB) == "function" then
         local _, cdb = addon.GetCharDB()
         if cdb then
+            local skId = addon.GetAchievementStorageKey and addon.GetAchievementStorageKey(id)
+            if not skId then return false end
             cdb.achievements = cdb.achievements or {}
-            cdb.achievements[id] = cdb.achievements[id] or {}
-            local rec = cdb.achievements[id]
+            cdb.achievements[skId] = cdb.achievements[skId] or {}
+            local rec = cdb.achievements[skId]
             if rec.completed == true then
                 return false
             end
@@ -639,6 +707,131 @@ local function TryMatchDropItemOn()
             end
         end
     end
+end
+
+local function SetupUseItemTrigger()
+    if not addon or addon.Disabled then return end
+    local st = EnsureUseItemState()
+    if not st or st.hooked then return end
+    st.hooked = true
+    RefreshUseItemCaches(st)
+
+    local function tryCompleteForItemId(itemId)
+        if not itemId then return end
+        if not st.defs or not next(st.defs) then
+            RefreshUseItemCaches(st)
+        end
+        if not st.defs or not next(st.defs) then return end
+        local idNum = tonumber(itemId)
+        if not idNum then return end
+        for achId, cfg in pairs(st.defs) do
+            if cfg and tonumber(cfg.itemId) == idNum then
+                CompleteAchievementById(achId)
+            end
+        end
+    end
+
+    local function tryCompleteForSpellId(spellId)
+        local sid = tonumber(spellId)
+        if not sid or sid <= 0 then return end
+        if not st.spellToItems or not next(st.spellToItems) then
+            RefreshUseItemCaches(st)
+        end
+        local list = st.spellToItems and st.spellToItems[sid]
+        if not list then return end
+        for i = 1, #list do
+            tryCompleteForItemId(list[i])
+        end
+    end
+
+    local function onUseContainerItem(a, b, c, d)
+        local bag, slot
+        if type(a) == "table" then
+            bag, slot = b, c -- hooksecurefunc(C_Container, "UseContainerItem", ...)
+        else
+            bag, slot = a, b -- hooksecurefunc("UseContainerItem", ...)
+        end
+        local itemID = nil
+        if GetContainerItemID then
+            itemID = GetContainerItemID(bag, slot)
+        end
+        if not itemID then
+            local info = getContainerItemInfoCompat(bag, slot)
+            itemID = (info and info.itemID) or nil
+        end
+        if not itemID then
+            local link = getContainerItemLinkCompat(bag, slot)
+            if link and GetItemInfoInstant then
+                itemID = select(1, GetItemInfoInstant(link))
+            end
+        end
+        tryCompleteForItemId(itemID)
+    end
+
+    local function onUseInventoryItem(slot)
+        local itemID = (GetInventoryItemID and GetInventoryItemID("player", slot)) or nil
+        tryCompleteForItemId(itemID)
+    end
+
+    local function onUseItemByName(nameOrLinkOrID)
+        local itemID = tonumber(nameOrLinkOrID)
+        if not itemID and GetItemInfoInstant and nameOrLinkOrID then
+            itemID = select(1, GetItemInfoInstant(nameOrLinkOrID))
+        end
+        tryCompleteForItemId(itemID)
+    end
+
+    -- Bag UI often calls *both* legacy global and C_Container; hook every path that exists
+    -- (previously only one branch ran, so clic-droit sac pouvait ne jamais appeler notre hook).
+    if type(UseContainerItem) == "function" then
+        hooksecurefunc("UseContainerItem", onUseContainerItem)
+    end
+    if C_Container and type(C_Container.UseContainerItem) == "function" then
+        hooksecurefunc(C_Container, "UseContainerItem", onUseContainerItem)
+    end
+
+    if type(UseInventoryItem) == "function" then
+        hooksecurefunc("UseInventoryItem", onUseInventoryItem)
+    end
+
+    if type(UseItemByName) == "function" then
+        hooksecurefunc("UseItemByName", onUseItemByName)
+    end
+
+    -- Barre d’action : UseAction ne passe pas par UseContainerItem.
+    local function onUseAction(actionSlot)
+        if not actionSlot or type(GetActionInfo) ~= "function" then return end
+        local t, id = GetActionInfo(actionSlot)
+        if t == "item" and id then
+            tryCompleteForItemId(id)
+        end
+    end
+    if type(UseAction) == "function" then
+        hooksecurefunc("UseAction", onUseAction)
+    end
+
+    local f = CreateFrame("Frame")
+    f:RegisterEvent("PLAYER_LOGIN")
+    f:RegisterEvent("BAG_UPDATE_DELAYED")
+    f:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+    f:RegisterEvent("UNIT_SPELLCAST_SENT")
+    f:SetScript("OnEvent", function(_, event, ...)
+        if event == "PLAYER_LOGIN" or event == "BAG_UPDATE_DELAYED" then
+            RefreshUseItemCaches(st)
+            return
+        end
+        if event == "UNIT_SPELLCAST_SUCCEEDED" or event == "UNIT_SPELLCAST_SENT" then
+            local unit, _, _, spellId
+            if event == "UNIT_SPELLCAST_SUCCEEDED" then
+                unit, _, spellId = ...
+            else
+                unit, _, _, spellId = ...
+            end
+            if unit == "player" and spellId then
+                tryCompleteForSpellId(spellId)
+            end
+        end
+    end)
 end
 
 local function SetupDropItemOnTrigger()
@@ -721,5 +914,6 @@ if addon then
     addon.CountRequiredTargetEntries = CountRequiredTargetEntries
     addon.SetupRequiredTargetAutoTrack = SetupRequiredTargetAutoTrack
     addon.SetupDropItemOnTrigger = SetupDropItemOnTrigger
+    addon.SetupUseItemTrigger = SetupUseItemTrigger
     addon.IsSelfFound = IsSelfFound
 end

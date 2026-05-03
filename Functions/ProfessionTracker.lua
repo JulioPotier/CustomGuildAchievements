@@ -139,8 +139,9 @@ local function IsRowCompleted(row, cdb)
     if not id then
         return false
     end
-    if cdb and cdb.achievements then
-        local rec = cdb.achievements[id]
+    if cdb and cdb.achievements and addon.GetAchievementStorageKey then
+        local sk = addon.GetAchievementStorageKey(tostring(id))
+        local rec = sk and cdb.achievements[sk]
         if rec and rec.completed then
             return true
         end

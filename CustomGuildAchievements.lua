@@ -41,15 +41,64 @@ local LoadTabPosition
 local QuestTrackedRows = {}
 
 -- =========================================================
--- Guild lock (Adventure Co)
+-- Guild-scoped achievement storage + membership gate (any guild)
 -- =========================================================
--- Global constant (requested): accessible from anywhere.
-_G.CGA_GUILD_NAME = _G.CGA_GUILD_NAME or "Adventure Co"
+-- Persist achievements/progress keys as: G@<NORMALIZED_GUILD>@<NORMALIZED_REALM>@<catalogAchId>
+-- Old saves used raw ids. One-time migrate into legacy scope:
+-- CGA_LEGACY_GUILD_NAME_FOR_MIGRATION @ current realm (historic single-guild builds).
+_G.CGA_LEGACY_GUILD_NAME_FOR_MIGRATION = _G.CGA_LEGACY_GUILD_NAME_FOR_MIGRATION or "Adventure Co"
+-- Options / setup UI: show Images/tabard-guild.png only while in this guild (branded asset).
+_G.CGA_TABARD_GUILD_NAME = _G.CGA_TABARD_GUILD_NAME or "Adventure Co"
 
--- GetGuildInfo("player") is often nil on the first PLAYER_LOGIN tick even when the player is in a guild.
--- Treating that as "not in Adventure Co" made DisableAddonUI() run and skipped RegisterQueuedAchievements
--- (PLAYER_LOGIN path checks addon.Disabled), so restorationsComplete never became true and nothing could complete.
-local function IsInTargetGuild()
+local function NormalizeGuildStorageSegment(s)
+    if not s or s == "" then return "" end
+    local t = string.upper(tostring(s))
+    t = string.gsub(t, "[%s_]+", "-")
+    t = string.gsub(t, "%-%-+", "-")
+    return t
+end
+
+local function IsScopedAchievementStorageKey(k)
+    return type(k) == "string" and string.sub(k, 1, 2) == "G@"
+end
+
+function addon.NormalizeGuildStorageSegment(s)
+    return NormalizeGuildStorageSegment(s)
+end
+
+--- @return string|nil Prefix "G@GUILD@REALM@", or nil if not in guild / no realm
+function addon.GetGuildAchievementStoragePrefix(guildNameOpt, realmOpt)
+    if addon and addon.Disabled then return nil end
+    local g = guildNameOpt
+    local r = realmOpt
+    if g == nil then g = GetGuildInfo("player") end
+    if r == nil then r = GetRealmName() end
+    if not g or g == "" or not r or r == "" then return nil end
+    return "G@" .. NormalizeGuildStorageSegment(g) .. "@" .. NormalizeGuildStorageSegment(r) .. "@"
+end
+
+function addon.GetAchievementStorageKey(baseAchId)
+    local base = baseAchId and tostring(baseAchId)
+    if not base or base == "" then return nil end
+    if IsScopedAchievementStorageKey(base) then
+        return base
+    end
+    local pref = addon.GetGuildAchievementStoragePrefix()
+    if not pref then return nil end
+    return pref .. base
+end
+
+function addon.GetAchievementBaseIdFromStorageKey(storageKey)
+    if not storageKey then return nil end
+    local s = tostring(storageKey)
+    if not IsScopedAchievementStorageKey(s) then return s end
+    local _guildSeg, _realmSeg, rest = string.match(s, "^G@([^@]*)@([^@]*)@(.*)$")
+    if rest and rest ~= "" then return rest end
+    return s
+end
+
+-- GetGuildInfo("player") may be nil briefly at PLAYER_LOGIN while IsInGuild() is already true — stay permissive.
+local function IsInAnyGuild()
     if type(IsInGuild) == "function" and not IsInGuild() then
         return false
     end
@@ -57,11 +106,12 @@ local function IsInTargetGuild()
     if not guildName or guildName == "" then
         return true
     end
-    return guildName == _G.CGA_GUILD_NAME
+    return true
 end
 
 if addon then
-    addon.IsInTargetGuild = IsInTargetGuild
+    addon.IsInTargetGuild = IsInAnyGuild
+    addon.IsInAnyGuild = IsInAnyGuild
 end
 
 local function DisableAddonUI()
@@ -277,6 +327,36 @@ local function GetCharDB()
     return db, db.chars[playerGUID]
 end
 
+-- One-time: prefix legacy flat keys with G@LEGACY_GUILD@REALM@
+local function MigrateAchievementStorageToGuildScoped()
+    local _, cdb = GetCharDB()
+    if not cdb then return end
+    cdb.meta = cdb.meta or {}
+    if cdb.meta.achievementStorageV2 then return end
+    local realm = GetRealmName() or ""
+    local legacyGuild = _G.CGA_LEGACY_GUILD_NAME_FOR_MIGRATION or "Adventure Co"
+    local function remapTable(t)
+        if type(t) ~= "table" then return {} end
+        local legacyPrefix = "G@"
+            .. NormalizeGuildStorageSegment(legacyGuild)
+            .. "@"
+            .. NormalizeGuildStorageSegment(realm)
+            .. "@"
+        local out = {}
+        for k, v in pairs(t) do
+            if type(k) == "string" and k ~= "" and not IsScopedAchievementStorageKey(k) then
+                out[legacyPrefix .. k] = v
+            else
+                out[k] = v
+            end
+        end
+        return out
+    end
+    cdb.achievements = remapTable(cdb.achievements or {})
+    cdb.progress = remapTable(cdb.progress or {})
+    cdb.meta.achievementStorageV2 = true
+end
+
 -- Cleanup function to remove incorrectly completed level bracket achievements
 -- Fixes a bug where players could earn level achievements at the wrong level
 local function CleanupIncorrectLevelAchievements()
@@ -290,10 +370,11 @@ local function CleanupIncorrectLevelAchievements()
     
     -- Check each completed achievement
     for achId, achievementData in pairs(cdb.achievements) do
+        local baseId = addon.GetAchievementBaseIdFromStorageKey(tostring(achId))
         -- Only check level bracket achievements (Level10, Level20, Level30, etc.)
-        if achId and type(achId) == "string" and string.match(achId, "^Level%d+$") then
+        if baseId and type(baseId) == "string" and string.match(baseId, "^Level%d+$") then
             -- Extract the required level from the achievement ID (e.g., "Level30" -> 30)
-            local requiredLevel = tonumber(string.match(achId, "Level(%d+)"))
+            local requiredLevel = tonumber(string.match(baseId, "Level(%d+)"))
             
             if requiredLevel and achievementData.completed and achievementData.level then
                 local completionLevel = achievementData.level
@@ -302,7 +383,7 @@ local function CleanupIncorrectLevelAchievements()
                 if completionLevel < requiredLevel then
                     -- Store for logging
                     table_insert(cleanedAchievements, {
-                        achId = achId,
+                        achId = baseId,
                         requiredLevel = requiredLevel,
                         completionLevel = completionLevel
                     })
@@ -357,10 +438,10 @@ local function CleanupNowEligibleFailedAchievements()
     local cleanedCount = 0
     for achId, rec in pairs(cdb.achievements) do
         if not rec.completed and (rec.failed or rec.failedAt) then
-            local achKey = tostring(achId)
-            local isAttempt = isAttemptByAchId[achKey] == true
+            local baseId = addon.GetAchievementBaseIdFromStorageKey(tostring(achId))
+            local isAttempt = baseId and isAttemptByAchId[baseId] == true
             if not isAttempt then
-                local maxLevel = maxLevelByAchId[achKey]
+                local maxLevel = baseId and maxLevelByAchId[baseId]
                 if maxLevel and playerLevel <= maxLevel then
                     rec.failed = nil
                     rec.failedAt = nil
@@ -378,7 +459,9 @@ end
 
 local function ClearProgress(achId)
     local _, cdb = GetCharDB()
-    if cdb and cdb.progress then cdb.progress[achId] = nil end
+    if not cdb or not cdb.progress then return end
+    local sk = addon.GetAchievementStorageKey(tostring(achId))
+    if sk then cdb.progress[sk] = nil end
 end
 
 local function UnlockedByReferencesId(def, prerequisiteId)
@@ -414,7 +497,8 @@ local function ResetKillProgressForDirectUnlockedBySuccessors(completedPrereqId)
             local depId = depDef.achId or depKey
             depId = depId and tostring(depId) or nil
             if depId then
-                local p = cdb.progress[depId]
+                local depSk = addon.GetAchievementStorageKey(depId)
+                local p = depSk and cdb.progress[depSk]
                 if type(p) == "table" then
                     p.killed = nil
                     p.quest = nil
@@ -433,9 +517,9 @@ local function ResetKillProgressForDirectUnlockedBySuccessors(completedPrereqId)
                         break
                     end
                     if empty then
-                        cdb.progress[depId] = nil
+                        if depSk then cdb.progress[depSk] = nil end
                     else
-                        cdb.progress[depId] = p
+                        if depSk then cdb.progress[depSk] = p end
                     end
                 end
             end
@@ -554,15 +638,16 @@ local function IsRowOutleveled(row)
     local achId = row.achId or row.id
     if achId then
         local _, cdb = GetCharDB()
-        if cdb and cdb.achievements and cdb.achievements[achId] and cdb.achievements[achId].completed then
+        local skDb = addon.GetAchievementStorageKey(tostring(achId))
+        if skDb and cdb and cdb.achievements and cdb.achievements[skDb] and cdb.achievements[skDb].completed then
             return false -- Achievement is completed in database, never mark as failed
         end
 
         -- Attempt-enabled achievements can fail due to explicit rules (mount/shapeshift/aspect/etc., timer expiry).
         -- Those failures are persisted in DB as `rec.failed` and should always be treated as failed,
         -- regardless of maxLevel.
-        if cdb and cdb.achievements then
-            local rec = cdb.achievements[tostring(achId)]
+        if cdb and cdb.achievements and skDb then
+            local rec = cdb.achievements[skDb]
             if rec and rec.failed == true and row._def and row._def.attemptEnabled == true then
                 return true
             end
@@ -582,8 +667,8 @@ local function IsRowOutleveled(row)
             or (row._def and (row._def.isMetaAchievement or row._def.isMeta))
             or (row.requiredAchievements ~= nil)
         local _, cdb = GetCharDB()
-        local achKey = achId and tostring(achId)
-        if usesStoredFailure and cdb and cdb.achievements and achKey and cdb.achievements[achKey] and cdb.achievements[achKey].failed then
+        local skDb = achId and addon.GetAchievementStorageKey(tostring(achId))
+        if usesStoredFailure and cdb and cdb.achievements and skDb and cdb.achievements[skDb] and cdb.achievements[skDb].failed then
             return true
         end
         return false
@@ -773,11 +858,13 @@ local function EnsureFailureTimestamp(achId)
     if not achId then return nil end
     local _, cdb = GetCharDB()
     if not cdb then return nil end
+    local sk = addon.GetAchievementStorageKey(tostring(achId))
+    if not sk then return nil end
     cdb.achievements = cdb.achievements or {}
-    local rec = cdb.achievements[achId]
+    local rec = cdb.achievements[sk]
     if not rec then
         rec = {}
-        cdb.achievements[achId] = rec
+        cdb.achievements[sk] = rec
     end
     local wasFailed = (rec.failed == true) or (rec.failedAt ~= nil)
     if not rec.completed and not rec.failedAt then
@@ -799,7 +886,9 @@ local function GetFailureTimestamp(achId)
     if not achId then return nil end
     local _, cdb = GetCharDB()
     if not cdb or not cdb.achievements then return nil end
-    local rec = cdb.achievements[achId]
+    local sk = addon.GetAchievementStorageKey(tostring(achId))
+    if not sk then return nil end
+    local rec = cdb.achievements[sk]
     if rec and rec.failedAt then
         if not rec.failed then
             rec.failed = true
@@ -843,7 +932,8 @@ GetAchievementRowForCallback = function(achId)
 end
 
 FireAchievementCallback = function(kind, achId, row, reason, atOverride)
-    local def = GetAchievementDefForCallback(achId, row)
+    local catalogId = (row and (row.id or row.achId)) or addon.GetAchievementBaseIdFromStorageKey(tostring(achId or "")) or achId
+    local def = GetAchievementDefForCallback(catalogId, row)
     if not def then
         return
     end
@@ -854,11 +944,12 @@ FireAchievementCallback = function(kind, achId, row, reason, atOverride)
 
     local at = atOverride or (time and time() or 0)
     local _, cdb = GetCharDB()
-    local rec = cdb and cdb.achievements and cdb.achievements[tostring(achId)] or nil
-    local progress = cdb and cdb.progress and cdb.progress[tostring(achId)] or nil
+    local sk = catalogId and addon.GetAchievementStorageKey(tostring(catalogId))
+    local rec = (sk and cdb and cdb.achievements and cdb.achievements[sk]) or nil
+    local progress = (sk and cdb and cdb.progress and cdb.progress[sk]) or nil
 
     local ctx = {
-        achId = achId,
+        achId = catalogId,
         row = row,
         def = def,
         reason = reason,
@@ -1049,10 +1140,12 @@ local function SortAchievementRows()
         -- Within the same group, apply group-specific sorting
         if aGroup == 1 then
             -- Completed group: sort by completedAt timestamp descending (most recent first)
-            local aId = a.id or (a.Title and a.Title.GetText and a.Title:GetText()) or ""
-            local bId = b.id or (b.Title and b.Title.GetText and b.Title:GetText()) or ""
-            local aRec = cdb and cdb.achievements and cdb.achievements[aId]
-            local bRec = cdb and cdb.achievements and cdb.achievements[bId]
+            local aId = a.achId or a.id or ""
+            local bId = b.achId or b.id or ""
+            local skA = aId ~= "" and addon.GetAchievementStorageKey(tostring(aId))
+            local skB = bId ~= "" and addon.GetAchievementStorageKey(tostring(bId))
+            local aRec = skA and cdb and cdb.achievements and cdb.achievements[skA]
+            local bRec = skB and cdb and cdb.achievements and cdb.achievements[skB]
             local aTimestamp = (aRec and aRec.completedAt) or 0
             local bTimestamp = (bRec and bRec.completedAt) or 0
             if aTimestamp ~= bTimestamp then
@@ -1076,8 +1169,8 @@ local function SortAchievementRows()
             end
         elseif aGroup == 3 then
             -- Failed group: sort by failedAt timestamp descending (most recent first)
-            local aId = a.id or (a.Title and a.Title.GetText and a.Title:GetText()) or ""
-            local bId = b.id or (b.Title and b.Title.GetText and b.Title:GetText()) or ""
+            local aId = a.achId or a.id or ""
+            local bId = b.achId or b.id or ""
             local aFailedAt = GetFailureTimestamp(aId) or 0
             local bFailedAt = GetFailureTimestamp(bId) or 0
             if aFailedAt ~= bFailedAt then
@@ -1319,8 +1412,9 @@ local function ApplyOutleveledStyle(row)
         if row.TS then
             local _, cdb = GetCharDB()
             local completedAt = nil
-            if cdb and cdb.achievements and achId and cdb.achievements[achId] then
-                completedAt = cdb.achievements[achId].completedAt
+            local skCo = achId and addon.GetAchievementStorageKey(tostring(achId))
+            if skCo and cdb and cdb.achievements and cdb.achievements[skCo] then
+                completedAt = cdb.achievements[skCo].completedAt
             end
             if completedAt then
                 row.TS:SetText(FormatTimestamp(completedAt))
@@ -1381,12 +1475,12 @@ if addon then
     addon.UpdateAllTrackedIndicators = UpdateAllTrackedIndicators
 end
 
--- Stable SavedVariables / progress key for a row (always the same string for a given acId).
+-- SavedVariables key: guild+realm scoped (see GetAchievementStorageKey).
 local function AchievementRowDbKey(row)
     if not row then return nil end
     local raw = row.achId or row.id
     if raw == nil or raw == "" then return nil end
-    return tostring(raw)
+    return addon.GetAchievementStorageKey(raw)
 end
 
 -- Helper function to check if an achievement is already completed (in row or database)
@@ -1406,8 +1500,8 @@ local function IsAchievementAlreadyCompleted(row)
     -- Check database to ensure we don't re-complete achievements
     do
         local _, cdb = GetCharDB()
-        if cdb and cdb.achievements then
-            local rec = cdb.achievements[key] or cdb.achievements[row.id] or cdb.achievements[row.achId]
+        if cdb and cdb.achievements and key then
+            local rec = cdb.achievements[key]
             if rec and rec.completed then
                 row.completed = true
                 return true
@@ -1456,9 +1550,10 @@ local function MarkRowCompleted(row, cdbParam)
         -- Some achievements (e.g. fall damage attempts) store their meaningful result in progress
         -- and would otherwise lose it after ClearProgress(id).
         do
+            local catalogIdMr = row and (row.achId or row.id)
             local def =
                 (row and row._def) or
-                (addon and addon.AchievementDefs and addon.AchievementDefs[tostring(id)]) or
+                (addon and addon.AchievementDefs and catalogIdMr and addon.AchievementDefs[tostring(catalogIdMr)]) or
                 nil
             if def and def.requiredFallHpLossPct and progress then
                 rec.maxFallHpLossPct = tonumber(progress.maxFallHpLossPct) or rec.maxFallHpLossPct
@@ -1523,9 +1618,9 @@ local function MarkRowCompleted(row, cdbParam)
 
         -- Achievement chains (unlockedBy): completing a prerequisite "activates" the next step.
         -- Any kill progress saved before activation must not retroactively validate the successor.
-        ResetKillProgressForDirectUnlockedBySuccessors(id)
+        ResetKillProgressForDirectUnlockedBySuccessors(row.achId or row.id)
 
-        ClearProgress(id)
+        ClearProgress(row.achId or row.id)
         addon.UpdateTotalPoints()
         
         -- Fire hook event for other addons
@@ -1535,7 +1630,7 @@ local function MarkRowCompleted(row, cdbParam)
             local totalPoints = GetTotalPoints()
             
             local achievementData = {
-                achievementId = id,
+                achievementId = row.achId or row.id,
                 title = (row.Title and row.Title.GetText and row.Title:GetText()) or row.title or nil,
                 points = finalPoints,
                 completedAt = rec.completedAt,
@@ -1557,15 +1652,16 @@ local function MarkRowCompleted(row, cdbParam)
     -- Completed achievements always show "Solo", never "Solo bonus"
     local isHardcoreActive = C_GameRules and C_GameRules.IsHardcoreActive and C_GameRules.IsHardcoreActive() or false
     if row.Sub then
+        local catalogIdSub = row and (row.achId or row.id)
         local def =
             (row and row._def) or
-            (addon and addon.AchievementDefs and addon.AchievementDefs[tostring(id)]) or
+            (addon and addon.AchievementDefs and catalogIdSub and addon.AchievementDefs[tostring(catalogIdSub)]) or
             nil
 
         -- For fall-attempt achievements, show the final "best" summary after completion.
         if def and def.requiredFallHpLossPct and addon and addon.GetCharDB then
             local _, cdb2 = addon.GetCharDB()
-            local rec2 = cdb2 and cdb2.achievements and cdb2.achievements[tostring(id)] or nil
+            local rec2 = cdb2 and cdb2.achievements and cdb2.achievements[id] or nil
             local best = tonumber(rec2 and rec2.maxFallHpLossPct) or 0
             local done = tonumber(rec2 and rec2.fallSuccessCount) or 0
             local total = tonumber((def and def.attemptsAllowed) or (rec2 and rec2.attemptsAllowed)) or 0
@@ -1624,7 +1720,7 @@ local function MarkRowCompleted(row, cdbParam)
             local def = row and row._def
             if def and def.requiredFallHpLossPct and def.attemptsAllowed then
                 local _, cdb2 = GetCharDB()
-                local rec2 = cdb2 and cdb2.achievements and cdb2.achievements[tostring(row.achId or row.id or "")] or nil
+                local rec2 = cdb2 and cdb2.achievements and cdb2.achievements[id] or nil
                 -- Fall summary is persisted into achievements record at completion time.
                 local best = tonumber(rec2 and rec2.maxFallHpLossPct) or 0
                 if best and best > 0 then
@@ -1703,11 +1799,12 @@ local function CheckPendingCompletions()
         end
 
         local _, cdb = GetCharDB()
-        local rec = cdb and cdb.achievements and cdb.achievements[key]
+        local skSt = addon.GetAchievementStorageKey(key)
+        local rec = skSt and cdb and cdb.achievements and cdb.achievements[skSt]
         if rec and rec.completed == true then
             return true
         end
-        local p = cdb and cdb.progress and cdb.progress[key]
+        local p = skSt and cdb and cdb.progress and cdb.progress[skSt]
         if p and p.completed == true then
             return true
         end
@@ -1943,8 +2040,9 @@ local function CheckPendingCompletions()
                     if depId and depId ~= "" then
                         depCount = depCount + 1
 
-                        local rec = achDb and achDb[depId] or nil
-                        local p = progDb and progDb[depId] or nil
+                        local depSk = addon.GetAchievementStorageKey(depId)
+                        local rec = depSk and achDb and achDb[depSk] or nil
+                        local p = depSk and progDb and progDb[depSk] or nil
                         local isCompleted = (rec and rec.completed == true) or (p and p.completed == true)
                         local isFailed = (rec and rec.failed == true) or false
 
@@ -1963,17 +2061,17 @@ local function CheckPendingCompletions()
                     -- If any dependency failed, fail this achievement too (unless already completed).
                     if anyFailed and thisAchId and not IsAchievementAlreadyCompleted(row) then
                         local _, cdb2 = GetCharDB()
-                        if cdb2 then
+                        local skFail = addon.GetAchievementStorageKey(tostring(thisAchId))
+                        if cdb2 and skFail then
                             cdb2.achievements = cdb2.achievements or {}
-                            local rec2 = cdb2.achievements[thisAchId] or {}
-                            cdb2.achievements[thisAchId] = rec2
+                            local rec2 = cdb2.achievements[skFail] or {}
+                            cdb2.achievements[skFail] = rec2
                             if not rec2.completed then
                                 local newlyFailed = (rec2.failed ~= true)
                                 rec2.failed = true
                                 rec2.failedAt = rec2.failedAt or time()
                                 rec2.failReason = rec2.failReason or "dependency"
                                 if newlyFailed then
-                                    -- Fire per-achievement onFail callback once for dependency failures.
                                     FireAchievementCallback("onFail", thisAchId, row, "dependency", rec2.failedAt)
                                     if PlaySound then
                                         local sid = (SOUNDKIT and SOUNDKIT.IG_QUEST_FAILED) or 847
@@ -2038,7 +2136,8 @@ local function RestoreCompletionsFromDB()
             if id then valid[tostring(id)] = true end
         end
         for achId, _ in pairs(cdb.achievements) do
-            if not valid[tostring(achId)] then
+            local baseId = addon.GetAchievementBaseIdFromStorageKey(tostring(achId))
+            if not valid[tostring(baseId)] then
                 cdb.achievements[achId] = nil
                 if cdb.progress then
                     cdb.progress[achId] = nil
@@ -2050,12 +2149,8 @@ local function RestoreCompletionsFromDB()
     for _, row in ipairs(rows) do
         local key = AchievementRowDbKey(row)
         local rec = nil
-        if cdb.achievements then
-            if key then
-                rec = cdb.achievements[key] or cdb.achievements[row.id] or cdb.achievements[row.achId]
-            else
-                rec = (row.id and cdb.achievements[row.id]) or (row.achId and cdb.achievements[row.achId])
-            end
+        if cdb.achievements and key then
+            rec = cdb.achievements[key]
         end
         if rec and rec.completed then
             row.completed = true
@@ -2123,14 +2218,23 @@ local function RestoreCompletionsFromDB()
                 end
                 if row.revealIcon and frame.Icon then frame.Icon:SetTexture(row.revealIcon) end
             end
+        elseif key then
+            row.completed = false
+            local frame = row.frame or row
+            if frame ~= row then
+                frame.completed = false
+            end
         end
+    end
+
+    if addon and addon.RefreshAllAchievementPoints then
+        addon.RefreshAllAchievementPoints()
     end
 end
 
 local function ToggleAchievementCharacterFrameTab()
     if addon and addon.Disabled then
         DisableAddonUI()
-        StaticPopup_Show("CGA_GUILD_LOCK")
         return
     end
     local isShown = CharacterFrame and CharacterFrame:IsShown() and
@@ -2152,7 +2256,6 @@ end
 local function ShowHardcoreAchievementWindow()
     if addon and addon.Disabled then
         DisableAddonUI()
-        StaticPopup_Show("CGA_GUILD_LOCK")
         return
     end
     local _, cdb = GetCharDB()
@@ -2351,8 +2454,6 @@ CreateAchToast = function(iconTex, title, pts, achIdOrRow)
     local row = nil
     
     if achIdOrRow then
-        local _, cdb = GetCharDB()
-        
         if type(achIdOrRow) == "table" then
             -- It's a row object
             row = achIdOrRow
@@ -2362,8 +2463,9 @@ CreateAchToast = function(iconTex, title, pts, achIdOrRow)
             achId = achIdOrRow
         end
         
-        if cdb and cdb.progress and achId and cdb.progress[achId] and cdb.progress[achId].pointsAtKill then
-            finalPoints = tonumber(cdb.progress[achId].pointsAtKill) or finalPoints
+        local progTk = achId and addon.GetProgress and addon.GetProgress(achId)
+        if progTk and progTk.pointsAtKill then
+            finalPoints = tonumber(progTk.pointsAtKill) or finalPoints
             -- Add self-found bonus if applicable (pointsAtKill doesn't include it)
             -- Simplified rule: 0-point achievements remain 0 (bonus computes to 0).
             if IsSelfFound() then
@@ -2459,9 +2561,10 @@ MarkRowCompletedWithToast = function(row)
     -- as "did we actually award completion/points?" while still showing the animation every success.
     if not newlyCompleted then
         local id = AchievementRowDbKey(row)
+        local catalogIdRw = row and (row.achId or row.id)
         local def =
             (row and row._def) or
-            (addon and addon.AchievementDefs and id and addon.AchievementDefs[tostring(id)]) or
+            (addon and addon.AchievementDefs and catalogIdRw and addon.AchievementDefs[tostring(catalogIdRw)]) or
             nil
         -- Repeatable rule: attemptsAllowed is mandatory; without it, force non-repeatable.
         local attemptsAllowed = def and tonumber(def.attemptsAllowed) or nil
@@ -2526,10 +2629,11 @@ local function ApplySelfFoundBonus()
     end
 
     local updatedCount = 0
-    for achId, ach in pairs(charData.achievements) do
+    for storKey, ach in pairs(charData.achievements) do
         if ach.completed and not ach.SFMod then
             local currentPts = tonumber(ach.points) or 0
-            local baseForBonus = getBasePointsForAch(achId)
+            local catId = addon.GetAchievementBaseIdFromStorageKey(tostring(storKey))
+            local baseForBonus = getBasePointsForAch(catId)
             local bonus = GetSelfFoundBonus(baseForBonus)
 
             -- Simplified rule: only point-bearing achievements receive a bonus (0 stays 0).
@@ -2564,13 +2668,17 @@ if addon then addon.RefreshOutleveledAll = RefreshOutleveledAll end
 local function GetProgress(achId)
     local _, cdb = GetCharDB()
     if not cdb then return nil end
+    local sk = addon.GetAchievementStorageKey(tostring(achId))
+    if not sk then return nil end
     cdb.progress = cdb.progress or {}
-    return cdb.progress[achId]
+    return cdb.progress[sk]
 end
 
 local function SetProgress(achId, key, value)
     local _, cdb = GetCharDB()
     if not cdb then return end
+    local sk = addon.GetAchievementStorageKey(tostring(achId))
+    if not sk then return end
 
     -- Opt-in attempt gating: if an achievement is attemptEnabled, do not record progress for
     -- completion-relevant keys unless the attempt is active. This prevents "pre-doing" objectives
@@ -2586,7 +2694,7 @@ local function SetProgress(achId, key, value)
     end
 
     cdb.progress = cdb.progress or {}
-    local p = cdb.progress[achId] or {}
+    local p = cdb.progress[sk] or {}
 
     -- Allow explicit deletion of a key via nil (used by chain-reset logic).
     p[key] = value
@@ -2612,7 +2720,7 @@ local function SetProgress(achId, key, value)
 
     -- If deleting every stored field, drop the progress row entirely for cleanliness.
     if not p.completed and not next(p) then
-        cdb.progress[achId] = nil
+        cdb.progress[sk] = nil
         C_Timer.After(0, function()
             if restorationsComplete then
                 addon.CheckPendingCompletions()
@@ -2626,7 +2734,7 @@ local function SetProgress(achId, key, value)
         return
     end
 
-    cdb.progress[achId] = p
+    cdb.progress[sk] = p
 
     C_Timer.After(0, function()
         -- Only check if restorations are complete (this is called during gameplay, not initial login)
@@ -2658,9 +2766,11 @@ local function AttemptActivate(achId, startedBy, timerSetOverride)
 
     local _, cdb = GetCharDB()
     if not cdb then return false end
+    local skAt = addon.GetAchievementStorageKey(tostring(achId))
+    if not skAt then return false end
     cdb.progress = cdb.progress or {}
 
-    local p = cdb.progress[achId] or {}
+    local p = cdb.progress[skAt] or {}
     local a = type(p.attempt) == "table" and p.attempt or {}
 
     if a.active == true then
@@ -2727,10 +2837,12 @@ local function AttemptFail(achId, reason, endAt)
 
     -- Persist failure in achievements record (for sorting + UI state).
     cdb.achievements = cdb.achievements or {}
-    local rec = cdb.achievements[achId]
+    local skAf = addon.GetAchievementStorageKey(tostring(achId))
+    if not skAf then return false end
+    local rec = cdb.achievements[skAf]
     if not rec then
         rec = {}
-        cdb.achievements[achId] = rec
+        cdb.achievements[skAf] = rec
     end
     local wasFailed = (rec.failed == true)
 
@@ -2739,7 +2851,7 @@ local function AttemptFail(achId, reason, endAt)
 
     -- Persist attempt state in progress (endAt + deactivate).
     cdb.progress = cdb.progress or {}
-    local p = cdb.progress[achId] or {}
+    local p = cdb.progress[skAf] or {}
     local a = type(p.attempt) == "table" and p.attempt or {}
     a.active = false
     a.endAt = endAt
@@ -2876,11 +2988,11 @@ local function ApplyAttemptTransportFailRules()
     local mounted = IsMounted and IsMounted()
     local cat, travel, aspect, ghostWolf = ScanPlayerBuffSpellFlags()
     for _, row in ipairs(addon.AchievementRowModel or {}) do
-        local id = AchievementRowDbKey(row)
-        if id and not IsAchievementAlreadyCompleted(row) and AttemptIsActive(id) then
+        local catId = row and (row.achId or row.id)
+        if catId and not IsAchievementAlreadyCompleted(row) and AttemptIsActive(catId) then
             local def =
                 (row and row._def) or
-                (addon and addon.AchievementDefs and addon.AchievementDefs[tostring(id)]) or
+                (addon and addon.AchievementDefs and addon.AchievementDefs[tostring(catId)]) or
                 nil
             if def then
                 local reason = nil
@@ -2896,7 +3008,7 @@ local function ApplyAttemptTransportFailRules()
                     reason = "ghost_wolf"
                 end
                 if reason then
-                    AttemptFail(id, reason, time())
+                    AttemptFail(catId, reason, time())
                 end
             end
         end
@@ -2936,11 +3048,11 @@ local function ApplyAttemptWalkOnlyFailRules()
     if not rows then return end
     local need = false
     for _, row in ipairs(rows) do
-        local id = AchievementRowDbKey(row)
-        if id and not IsAchievementAlreadyCompleted(row) and AttemptIsActive(id) then
+        local catScan = row and (row.achId or row.id)
+        if catScan and not IsAchievementAlreadyCompleted(row) and AttemptIsActive(catScan) then
             local def =
                 (row and row._def) or
-                (addon and addon.AchievementDefs and addon.AchievementDefs[tostring(id)]) or
+                (addon and addon.AchievementDefs and addon.AchievementDefs[tostring(catScan)]) or
                 nil
             if def and def.walkOnly == true then
                 need = true
@@ -2953,9 +3065,9 @@ local function ApplyAttemptWalkOnlyFailRules()
     -- Grace window: do not instantly fail on activation if the player is currently running.
     -- Give a short moment to toggle walk before enforcing the rule.
     local now = time and time() or 0
-    local function IsBeyondGrace(id)
+    local function IsBeyondGrace(achCatalogId)
         if not (addon and addon.GetProgress) then return true end
-        local p = addon.GetProgress(id) or {}
+        local p = addon.GetProgress(achCatalogId) or {}
         local a = p and p.attempt
         local startedAt = type(a) == "table" and tonumber(a.startedAt) or nil
         if not startedAt then return true end
@@ -2966,14 +3078,14 @@ local function ApplyAttemptWalkOnlyFailRules()
         return
     end
     for _, row in ipairs(rows) do
-        local id = AchievementRowDbKey(row)
-        if id and not IsAchievementAlreadyCompleted(row) and AttemptIsActive(id) then
+        local catWalk = row and (row.achId or row.id)
+        if catWalk and not IsAchievementAlreadyCompleted(row) and AttemptIsActive(catWalk) then
             local def =
                 (row and row._def) or
-                (addon and addon.AchievementDefs and addon.AchievementDefs[tostring(id)]) or
+                (addon and addon.AchievementDefs and addon.AchievementDefs[tostring(catWalk)]) or
                 nil
-            if def and def.walkOnly == true and IsBeyondGrace(id) then
-                AttemptFail(id, "not_walking", time())
+            if def and def.walkOnly == true and IsBeyondGrace(catWalk) then
+                AttemptFail(catWalk, "not_walking", time())
             end
         end
     end
@@ -3077,7 +3189,9 @@ do
         if type(getCharDB) ~= "function" then return false end
         local _, cdb = getCharDB()
         if not (cdb and cdb.achievements) then return false end
-        local rec = cdb.achievements[tostring(achId)]
+        local skTf = addon.GetAchievementStorageKey(tostring(achId))
+        if not skTf then return false end
+        local rec = cdb.achievements[skTf]
         return rec and rec.failed == true
     end
 
@@ -3599,74 +3713,12 @@ if addon then addon.OpenOptionsPanel = OpenOptionsPanel end
 
 BINDING_NAME_CGA_TOGGLE = "Toggle Achievements"
 
--- Lazily initialize minimap button resources on demand.
-local LDB, LDBIcon, minimapDataObject
-local minimapRegistered = false
-
--- Register the minimap icon
-local function InitializeMinimapButton()
-    local db = EnsureDB()
-    if not db.minimap then
-        db.minimap = { hide = false, position = 45 }
+-- No minimap broker icon (use Dashboard, key bind, or Character tab).
+local function HideCgaMinimapIconIfRegistered()
+    local ok, LDBIcon = pcall(LibStub, "LibDBIcon-1.0")
+    if ok and LDBIcon and LDBIcon.IsRegistered and LDBIcon:IsRegistered("HardcoreAchievements") and LDBIcon.Hide then
+        LDBIcon:Hide("HardcoreAchievements")
     end
-
-    -- If the user has it hidden, don't create/register anything yet.
-    if db.minimap.hide then
-        return
-    end
-
-    if not LDB then
-        LDB = LibStub("LibDataBroker-1.1")
-    end
-    if not LDBIcon then
-        LDBIcon = LibStub("LibDBIcon-1.0")
-    end
-    if not minimapDataObject then
-        minimapDataObject = LDB:NewDataObject("HardcoreAchievements", {
-            type = "data source",
-            text = "HardcoreAchievements",
-            icon = "Interface\\AddOns\\CustomGuildAchievements\\Images\\CustomGuildAchievementsButton.png",
-            OnClick = function(self, button)
-                if button == "LeftButton" and not IsShiftKeyDown() then
-                    -- Always open Dashboard, regardless of useCharacterPanel setting
-                    if addon and addon.Dashboard and addon.Dashboard.Toggle then
-                        addon.Dashboard:Toggle()
-                    elseif addon and addon.ShowDashboard then
-                        addon.ShowDashboard()
-                    else
-                        -- Fallback to Character Panel if Dashboard not available
-                        ShowHardcoreAchievementWindow()
-                    end
-                elseif button == "RightButton" then
-                    -- Right-click to open options panel
-                    OpenOptionsPanel()
-                elseif button == "LeftButton" and IsShiftKeyDown() then
-                    -- Left-click with Shift to open admin panel
-                    if HardcoreAchievementsAdminPanel and HardcoreAchievementsAdminPanel.Toggle then
-                        HardcoreAchievementsAdminPanel:Toggle()
-                    end
-                end
-            end,
-            OnTooltipShow = function(tooltip)
-                tooltip:AddLine("Custom Guild Achievements", 1, 1, 1)
-
-                tooltip:AddLine("Left-click to open Dashboard", 0.5, 0.5, 0.5)
-                tooltip:AddLine("Right-click to open Options", 0.5, 0.5, 0.5)
-
-                local completedCount, totalCount = AchievementCount()
-                tooltip:AddLine(" ")
-                local countStr = string_format("%d/%d", completedCount, totalCount)
-                tooltip:AddLine(string_format(ACHIEVEMENT_META_COMPLETED_DATE, countStr), 0.6, 0.9, 0.6)
-            end,
-        })
-    end
-
-    -- Register once; then show.
-    if not minimapRegistered then
-        LDBIcon:Register("HardcoreAchievements", minimapDataObject, db)
-        minimapRegistered = true
-    end
-    LDBIcon:Show("HardcoreAchievements")
 end
 
 -- =========================================================
@@ -3679,11 +3731,11 @@ initFrame:RegisterEvent("ADDON_LOADED")
 initFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_LOGIN" then
         playerGUID = UnitGUID("player")
+        MigrateAchievementStorageToGuildScoped()
 
-        -- Guild lock: disable addon outside Adventure Co
-        if not IsInTargetGuild() then
+        -- Require guild membership (any guild)
+        if not IsInAnyGuild() then
             DisableAddonUI()
-            StaticPopup_Show("CGA_GUILD_LOCK")
             -- Stop early: no minimap button, no tab positioning, no init work.
             return
         end
@@ -3714,8 +3766,7 @@ initFrame:SetScript("OnEvent", function(self, event, ...)
             -- These will be called from the registration completion handler
         end
         
-        -- Initialize minimap button (lightweight, can run immediately)
-        InitializeMinimapButton()
+        HideCgaMinimapIconIfRegistered()
 
         -- Enable startNpc "!" pins (only for defs that provide startNpc.coords).
         if addon and addon.EnableStartNpcMapPins then
@@ -3819,19 +3870,6 @@ StaticPopupDialogs["Custom Guild Achievements TBC"] = {
     --OnCancel = function()
         -- Popup automatically closes
     --end,
-}
-
--- Define the guild-lock popup (Adventure Co only)
-StaticPopupDialogs["CGA_GUILD_LOCK"] = {
-    text = "|cff008066CustomGuildAchievements|r\n\nThis addon is reserved for guild:\n|cffffd100" .. tostring(_G.CGA_GUILD_NAME) .. "|r\n\nYou are not currently in this guild, so the addon will be deactivated.",
-    button1 = "Okay",
-    timeout = 0,
-    whileDead = true,
-    hideOnEscape = true,
-    preferredIndex = 3,
-    OnAccept = function()
-        -- Popup automatically closes
-    end,
 }
 
 -- =========================================================
@@ -5407,26 +5445,28 @@ end
 -- Expose EvaluateCustomCompletions globally for use by other modules
 if addon then addon.EvaluateCustomCompletions = EvaluateCustomCompletions end
 
--- When guild/character name was not available at login, re-run completion check once GetGuildInfo is populated
+-- When roster updates (guild name finally available / guild hop), rebuild completion state + check pending
 do
     local cgaRoster = CreateFrame("Frame")
-    local cgaLockPopupShown = false
+    local lastGuildAchievementPrefixSeen = nil
     cgaRoster:RegisterEvent("GUILD_ROSTER_UPDATE")
     cgaRoster:SetScript("OnEvent", function()
         if not addon then return end
         if not IsInGuild() then
             return
         end
-        local n = GetGuildInfo("player")
-        if n and n ~= "" and n ~= _G.CGA_GUILD_NAME then
-            if not addon.Disabled then
-                DisableAddonUI()
-                if not cgaLockPopupShown then
-                    cgaLockPopupShown = true
-                    StaticPopup_Show("CGA_GUILD_LOCK")
-                end
+        local pref = addon.GetGuildAchievementStoragePrefix()
+        if pref ~= lastGuildAchievementPrefixSeen then
+            lastGuildAchievementPrefixSeen = pref
+            if RestoreCompletionsFromDB and pref then
+                RestoreCompletionsFromDB()
             end
-            return
+            if restorationsComplete and addon.RefreshOutleveledAll then
+                addon.RefreshOutleveledAll()
+            end
+            if AchievementPanel and AchievementPanel.achievements and SortAchievementRows then
+                SortAchievementRows()
+            end
         end
         if addon.Disabled or not restorationsComplete then
             return
@@ -5696,7 +5736,9 @@ do
             if type(getCharDB) ~= "function" then return false end
             local _, cdb = getCharDB()
             if not (cdb and cdb.achievements) then return false end
-            local rec = cdb.achievements[tostring(achId)]
+            local skTf = addon.GetAchievementStorageKey(tostring(achId))
+            if not skTf then return false end
+            local rec = cdb.achievements[skTf]
             return rec and rec.failed == true
         end
 
@@ -6954,16 +6996,16 @@ do
                             if rows then
                                 for _, row in ipairs(rows) do
                                     if not IsAchievementAlreadyCompleted(row) then
-                                        local id = AchievementRowDbKey(row)
-                                        local def = (row and row._def) or (addon and addon.AchievementDefs and id and addon.AchievementDefs[tostring(id)]) or nil
+                                        local catFk = row and (row.achId or row.id)
+                                        local def = (row and row._def) or (addon and addon.AchievementDefs and catFk and addon.AchievementDefs[tostring(catFk)]) or nil
                                         local requiredPct = def and tonumber(def.requiredFallHpLossPct) or nil
-                                        local attemptActive = id and (AttemptIsActive(id) or AttemptIsActive(tostring(id)))
-                                        if id and def and def.attemptEnabled and requiredPct and requiredPct > 0 and attemptActive then
-                                            local p = GetProgress(id) or {}
+                                        local attemptActive = catFk and AttemptIsActive(catFk)
+                                        if catFk and def and def.attemptEnabled and requiredPct and requiredPct > 0 and attemptActive then
+                                            local p = GetProgress(catFk) or {}
                                             local previousBest = tonumber(p.maxFallHpLossPct) or 0
                                             local newBest = (lossPct > previousBest) and lossPct or previousBest
-                                            SetProgress(id, "maxFallHpLossPct", newBest)
-                                            SetProgress(id, "lastFallHpLossPct", lossPct)
+                                            SetProgress(catFk, "maxFallHpLossPct", newBest)
+                                            SetProgress(catFk, "lastFallHpLossPct", lossPct)
                                             local neededRuns = tonumber(def.attemptsAllowed) or 0
                                             local successRuns = tonumber(p.fallSuccessCount) or 0
                                             if row.Sub and type(row.Sub.SetText) == "function" and neededRuns > 0 then
@@ -6971,7 +7013,7 @@ do
                                             end
                                             if lossPct >= requiredPct then
                                                 successRuns = successRuns + 1
-                                                SetProgress(id, "fallSuccessCount", successRuns)
+                                                SetProgress(catFk, "fallSuccessCount", successRuns)
 
                                                 if row.Sub and type(row.Sub.SetText) == "function" and neededRuns > 0 then
                                                     row.Sub:SetText(string_format("Best fall: %.1f%% (%d/%d)", newBest, successRuns, neededRuns))
@@ -7958,6 +8000,12 @@ do
         if addon and addon.SetupDropItemOnTrigger then
             pcall(function()
                 addon.SetupDropItemOnTrigger()
+            end)
+        end
+        -- useItem: hook item usage (right-click from bag etc.)
+        if addon and addon.SetupUseItemTrigger then
+            pcall(function()
+                addon.SetupUseItemTrigger()
             end)
         end
     end
