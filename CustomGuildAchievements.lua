@@ -7974,6 +7974,14 @@ do
         addon.Initializing = false
         print("|cff008066[Custom Guild Achievements]|r |cffffd100All achievements loaded!|r")
 
+        -- Allow optional catalogs (e.g. guild-gated) to register after init and refresh the panel once.
+        addon.RefreshPanelsAfterDeferredAchievementCatalog = function()
+            pcall(SortAchievementRows)
+            pcall(ApplyFilter)
+            pcall(RefreshAllAchievementPoints)
+        end
+        addon._CGA_InitFinalized = true
+
         -- Nothing else to do after finalization
         f:UnregisterAllEvents()
     end

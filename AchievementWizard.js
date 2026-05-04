@@ -23,11 +23,11 @@
     fr: {
       appTitle: "Wizard d’achievement (CustomGuildAchievements)",
       appSubtitle:
-        'Remplissez les infos étape par étape, puis copiez/collez le snippet Lua dans <span class="k">Achievements/CustomCatalog.lua</span> (dans la table <span class="k">CustomAchievements</span>).',
+        'Remplissez les infos étape par étape, puis copiez/collez le snippet Lua dans <span class="k">Achievements/AdventureCoAchievements.lua</span> (dans la table <span class="k">CustomAchievements</span>).',
       outputBadge: "Sortie",
       outputText: "1 bloc Lua “def” prêt à coller",
       snippetBadge: "Snippet Lua",
-      snippetSubtitle: 'Collez dans <span class="k">Achievements/CustomCatalog.lua</span>',
+      snippetSubtitle: 'Collez dans <span class="k">Achievements/AdventureCoAchievements.lua</span>',
       langToggleTitle: "Basculer FR/EN",
       backBtn: "Retour",
       nextBtn: "Suivant",
@@ -111,11 +111,11 @@
     en: {
       appTitle: "Achievement wizard (CustomGuildAchievements)",
       appSubtitle:
-        'Answer the questions step by step, then copy/paste the Lua snippet into <span class="k">Achievements/CustomCatalog.lua</span> (inside the <span class="k">CustomAchievements</span> table).',
+        'Answer the questions step by step, then copy/paste the Lua snippet into <span class="k">Achievements/AdventureCoAchievements.lua</span> (inside the <span class="k">CustomAchievements</span> table).',
       outputBadge: "Output",
       outputText: "1 Lua “def” block ready to paste",
       snippetBadge: "Lua snippet",
-      snippetSubtitle: 'Paste into <span class="k">Achievements/CustomCatalog.lua</span>',
+      snippetSubtitle: 'Paste into <span class="k">Achievements/AdventureCoAchievements.lua</span>',
       langToggleTitle: "Toggle FR/EN",
       backBtn: "Back",
       nextBtn: "Next",

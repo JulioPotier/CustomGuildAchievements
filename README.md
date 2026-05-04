@@ -9,7 +9,7 @@ WoW addon (Classic Era / Vanilla) that adds a “Hardcore / Guild” achievement
 - **Key files**:
   - `CustomGuildAchievements.lua`: engine + triggers + UI
   - `Achievements/*.lua`: achievement catalogs (guild, dungeons, raids, exploration, etc.)
-  - `Achievements/CustomCatalog.lua`: **your custom achievements**
+  - `Achievements/AdventureCoAchievements.lua`: **Adventure Co sandbox / examples** (only registered when `GetGuildInfo("player")` matches `ADVENTURE_CO_GUILD_ALLOWLIST` in that file — avoids clutter for other CurseForge users; not a security boundary).
 
 ## Usage (player side)
 
@@ -106,7 +106,7 @@ Progress is stored in `progress.openedObjects`.
 There are two approaches:
 
 - **Dungeon sets / requiredItems**: some catalogs (e.g., dungeon sets) use an `IsCompleted` function associated with the achId, evaluated on `UNIT_INVENTORY_CHANGED`.
-- **Custom item tracker**: via **`customItem = function() ... end`** (see `Achievements/CustomCatalog.lua`).
+- **Custom item tracker**: via **`customItem = function() ... end`** (see `Achievements/AdventureCoAchievements.lua`).
 - **Use item (consume)**: **`useItem`** completes when the player **actually uses** the item (see **6.2**).
 
 ### 6) Auras / Spellcast / Emotes / Chat
@@ -160,7 +160,7 @@ Behavior:
 - compares the **resolved item ID** after the hooked call completes the trigger when it matches **`itemId`**;
 - respects **`unlockedBy`** chains: `CompleteAchievementById` skips completion until prerequisites are satisfied (same as other triggers).
 
-Example chain (inventory then consume): keep an apple in bags first, then a second achievement with `useItem` and `unlockedBy` — see `Achievements/CustomCatalog.lua` (`CUSTOM-ITEM-7723-INBAG-001`, `CUSTOM-ITEM-4536-USE-001`).
+Example chain (inventory then consume): keep an apple in bags first, then a second achievement with `useItem` and `unlockedBy` — see `Achievements/AdventureCoAchievements.lua` (`CUSTOM-ITEM-7723-INBAG-001`, `CUSTOM-ITEM-4536-USE-001`).
 
 Limits:
 
@@ -255,7 +255,7 @@ Sequential unlocks: an achievement stays **hidden** and its completion logic sta
 - Completions go through `addon.MarkRowCompleted` so the tracker can react: the completed achievement is **untracked** immediately, then any successor definition whose `unlockedBy` now passes **`IsUnlockedBy`** is **auto-tracked** (freeing a slot before tracking the next step avoids hitting the 10-track limit).
 - Additionally, a **full scan** of all definitions that declare `unlockedBy` runs when **`ApplyFilter`** runs (list visibility refresh) and once shortly after **`PLAYER_LOGIN`**, so successors are tracked even if prerequisites were already done earlier or the window was not opened.
 
-**Example** (`Achievements/CustomCatalog.lua`)
+**Example** (`Achievements/AdventureCoAchievements.lua`)
 
 ```lua
 -- Step 2 unlocks after step 1
@@ -269,7 +269,7 @@ Sequential unlocks: an achievement stays **hidden** and its completion logic sta
 
 ## Creating custom achievements
 
-Edit `Achievements/CustomCatalog.lua`. This file already contains examples (targeted emote, simple kill, items in bag/equipped, attempts, merchant spend, meta achievements…).
+Edit `Achievements/AdventureCoAchievements.lua` (or add another catalog `.lua` in the `.toc` after the core files). The Adventure Co file contains examples (targeted emote, simple kill, items in bag/equipped, attempts, merchant spend, meta achievements…) and only **registers** them when the player’s guild name matches **`ADVENTURE_CO_GUILD_ALLOWLIST`** at the top of that file. Forks can rename the file or duplicate the pattern for their own guild.
 
 ### “Base” fields (common)
 
