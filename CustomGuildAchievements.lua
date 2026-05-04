@@ -2135,6 +2135,14 @@ local function RestoreCompletionsFromDB()
             local id = row and (row.id or row.achId)
             if id then valid[tostring(id)] = true end
         end
+        -- Some catalogs can register late (e.g. gated by guild name availability). Allow them to
+        -- declare their IDs ahead of time so we don't delete completions on login.
+        local deferred = addon and addon.DeferredCatalogAchievementIds
+        if type(deferred) == "table" then
+            for id, ok in pairs(deferred) do
+                if ok and id then valid[tostring(id)] = true end
+            end
+        end
         for achId, _ in pairs(cdb.achievements) do
             local baseId = addon.GetAchievementBaseIdFromStorageKey(tostring(achId))
             if not valid[tostring(baseId)] then

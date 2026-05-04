@@ -248,6 +248,18 @@ local CustomAchievements = {
 	},
 }
 
+-- Expose these IDs early so the DB "purge unknown achievements" pass doesn't delete completions
+-- before this catalog has had a chance to register (guild name can be nil briefly at login).
+if addon then
+	addon.DeferredCatalogAchievementIds = addon.DeferredCatalogAchievementIds or {}
+	for i = 1, #CustomAchievements do
+		local id = CustomAchievements[i] and CustomAchievements[i].achId
+		if id and id ~= "" then
+			addon.DeferredCatalogAchievementIds[tostring(id)] = true
+		end
+	end
+end
+
 local function RegisterAdventureCoCatalog()
 	if not addon then
 		return
